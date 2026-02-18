@@ -45,13 +45,16 @@ class EventStore:
                 CREATE INDEX IF NOT EXISTS idx_received_at ON sanitized_events(received_at);
                 CREATE INDEX IF NOT EXISTS idx_injection ON sanitized_events(injection_detected);
                 CREATE INDEX IF NOT EXISTS idx_risk_score ON sanitized_events(risk_score);
-                CREATE INDEX IF NOT EXISTS idx_to_addr ON sanitized_events(to_addr);
             """)
-            # Migrate existing DBs that don't have to_addr yet
+            # Migrate existing DBs: add to_addr column if missing, then index it
             try:
                 conn.execute("ALTER TABLE sanitized_events ADD COLUMN to_addr TEXT NOT NULL DEFAULT ''")
             except Exception:
                 pass  # Column already exists
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_to_addr ON sanitized_events(to_addr)")
+            except Exception:
+                pass
 
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
