@@ -30,6 +30,7 @@ class EventStore:
                     provider TEXT NOT NULL DEFAULT 'generic',
                     received_at TEXT NOT NULL,
                     from_addr TEXT NOT NULL DEFAULT '',
+                    to_addr TEXT NOT NULL DEFAULT '',
                     subject_sanitized TEXT NOT NULL DEFAULT '',
                     body_sanitized TEXT NOT NULL DEFAULT '',
                     risk_flags TEXT NOT NULL DEFAULT '[]',
@@ -44,7 +45,13 @@ class EventStore:
                 CREATE INDEX IF NOT EXISTS idx_received_at ON sanitized_events(received_at);
                 CREATE INDEX IF NOT EXISTS idx_injection ON sanitized_events(injection_detected);
                 CREATE INDEX IF NOT EXISTS idx_risk_score ON sanitized_events(risk_score);
+                CREATE INDEX IF NOT EXISTS idx_to_addr ON sanitized_events(to_addr);
             """)
+            # Migrate existing DBs that don't have to_addr yet
+            try:
+                conn.execute("ALTER TABLE sanitized_events ADD COLUMN to_addr TEXT NOT NULL DEFAULT ''")
+            except Exception:
+                pass  # Column already exists
 
     @contextmanager
     def _conn(self) -> Generator[sqlite3.Connection, None, None]:
@@ -58,18 +65,20 @@ class EventStore:
 
     def store_event(self, event: SanitizedEmailEvent, raw_masked: str | None = None) -> None:
         """Store a sanitized event."""
+        to_addr = event.to_addrs[0] if event.to_addrs else ""
         with self._conn() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO sanitized_events
-                   (event_id, provider, received_at, from_addr, subject_sanitized,
+                   (event_id, provider, received_at, from_addr, to_addr, subject_sanitized,
                     body_sanitized, risk_flags, injection_detected, truncated,
                     risk_score, raw_payload_masked, sanitized_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event.event_id,
                     event.provider,
                     event.received_at.isoformat() if event.received_at else datetime.utcnow().isoformat(),
                     event.from_addr,
+                    to_addr,
                     event.subject_sanitized,
                     event.body_sanitized,
                     json.dumps([f.value for f in event.risk.flags]),
@@ -91,31 +100,53 @@ class EventStore:
                 return dict(row)
         return None
 
-    def list_events(self, limit: int = 50, offset: int = 0, from_addr: str | None = None) -> list[dict]:
-        """List events ordered by received_at descending, optionally filtered by sender."""
-        with self._conn() as conn:
-            if from_addr:
-                rows = conn.execute(
-                    "SELECT * FROM sanitized_events WHERE from_addr LIKE ? ORDER BY received_at DESC LIMIT ? OFFSET ?",
-                    (f"%{from_addr}%", limit, offset),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM sanitized_events ORDER BY received_at DESC LIMIT ? OFFSET ?",
-                    (limit, offset),
-                ).fetchall()
-            return [dict(r) for r in rows]
-
-    def list_senders(self) -> list[dict]:
-        """List unique senders with email counts."""
+    def list_events(self, limit: int = 50, offset: int = 0, from_addr: str | None = None, to_addr: str | None = None) -> list[dict]:
+        """List events ordered by received_at descending, optionally filtered by sender or recipient account."""
+        conditions = []
+        params: list = []
+        if from_addr:
+            conditions.append("from_addr LIKE ?")
+            params.append(f"%{from_addr}%")
+        if to_addr:
+            conditions.append("to_addr LIKE ?")
+            params.append(f"%{to_addr}%")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.extend([limit, offset])
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT from_addr,
+                f"SELECT * FROM sanitized_events {where} ORDER BY received_at DESC LIMIT ? OFFSET ?",
+                params,
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def list_senders(self, to_addr: str | None = None) -> list[dict]:
+        """List unique senders with email counts, optionally scoped to one account."""
+        where = "WHERE to_addr LIKE ?" if to_addr else ""
+        params = [f"%{to_addr}%"] if to_addr else []
+        with self._conn() as conn:
+            rows = conn.execute(
+                f"""SELECT from_addr,
+                          COUNT(*) as total,
+                          SUM(CASE WHEN injection_detected = 1 THEN 1 ELSE 0 END) as injections,
+                          MAX(received_at) as last_seen
+                   FROM sanitized_events {where}
+                   GROUP BY from_addr
+                   ORDER BY total DESC""",
+                params,
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def list_accounts(self) -> list[dict]:
+        """List distinct recipient accounts (inboxes) connected to this server."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT to_addr,
                           COUNT(*) as total,
                           SUM(CASE WHEN injection_detected = 1 THEN 1 ELSE 0 END) as injections,
                           MAX(received_at) as last_seen
                    FROM sanitized_events
-                   GROUP BY from_addr
+                   WHERE to_addr != ''
+                   GROUP BY to_addr
                    ORDER BY total DESC"""
             ).fetchall()
             return [dict(r) for r in rows]

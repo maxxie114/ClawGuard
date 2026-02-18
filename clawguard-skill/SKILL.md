@@ -44,9 +44,11 @@ Set `CLAWGUARD_API_TOKEN` to the server's `CLAWGUARD_API_KEY` value — this sta
 
 | Endpoint | Method | Auth | Use for |
 |---|---|---|
+| `/api/accounts` | GET | Required | List all connected inboxes (recipient accounts) |
 | `/api/events?limit=50&offset=0` | GET | Required | List recent emails, newest first |
+| `/api/events?to_addr=me@gmail.com` | GET | Required | Filter emails by recipient inbox (partial match) |
 | `/api/events?from_addr=alice@example.com` | GET | Required | Filter emails by sender (partial match) |
-| `/api/senders` | GET | Required | List all senders with email counts |
+| `/api/senders?to_addr=me@gmail.com` | GET | Required | List senders, optionally scoped to one inbox |
 | `/api/events/risky?min_score=1&limit=50` | GET | Required | List risky emails by score descending |
 | `/api/events/{event_id}` | GET | Required | Get one email by ID |
 | `/api/timeline?days=7` | GET | Required | Daily email volume and risk trends |
@@ -72,11 +74,17 @@ Set `CLAWGUARD_API_TOKEN` to the server's `CLAWGUARD_API_KEY` value — this sta
 2. If results exist: warn user, list each with risk score and flags
 3. If empty: "No risky emails detected"
 
+### "What are my emails?" / "Show me emails for maxxie114@gmail.com"
+
+1. `GET /api/accounts` to list all connected inboxes — identify which account the user means
+2. `GET /api/events?to_addr=maxxie114@gmail.com` to get emails for that specific inbox
+3. Present with risk info. Always clarify which account you're showing if multiple exist.
+
 ### "Show me emails from X" / "What did alice@example.com send?"
 
 1. `GET /api/senders` to list all known senders (helps identify the exact address)
 2. `GET /api/events?from_addr=alice@example.com` to filter emails by sender (partial match — `alice` works too)
-3. Present results with risk info
+3. Combine with `to_addr` to scope to a specific inbox: `?from_addr=alice&to_addr=me@gmail.com`
 
 ### "Search for emails about X"
 

@@ -2,9 +2,10 @@
 """Query ClawGuard API for sanitized emails.
 
 Usage:
-    python query_emails.py recent [--limit N] [--from EMAIL]
-    python query_emails.py sender <email>
-    python query_emails.py senders
+    python query_emails.py recent [--limit N] [--from EMAIL] [--account EMAIL]
+    python query_emails.py sender <email> [--account EMAIL]
+    python query_emails.py senders [--account EMAIL]
+    python query_emails.py accounts
     python query_emails.py risky [--min-score N] [--limit N]
     python query_emails.py event <event_id>
     python query_emails.py search <query> [--limit N]
@@ -96,18 +97,28 @@ def cmd_recent(args):
     path = f"/api/events?limit={args.limit}&offset=0"
     if args.from_addr:
         path += f"&from_addr={urllib.parse.quote(args.from_addr)}"
+    if args.account:
+        path += f"&to_addr={urllib.parse.quote(args.account)}"
     events = _get(path)
     if not events:
         print("No emails found.")
         return
-    label = f"from {args.from_addr} " if args.from_addr else ""
-    print(f"Recent emails {label}({len(events)}):\n")
+    parts = []
+    if args.account:
+        parts.append(f"account={args.account}")
+    if args.from_addr:
+        parts.append(f"from={args.from_addr}")
+    label = f" [{', '.join(parts)}]" if parts else ""
+    print(f"Recent emails{label} ({len(events)}):\n")
     for e in events:
         _print_email_summary(e)
 
 
 def cmd_sender(args):
-    events = _get(f"/api/events?limit={args.limit}&offset=0&from_addr={urllib.parse.quote(args.email)}")
+    path = f"/api/events?limit={args.limit}&offset=0&from_addr={urllib.parse.quote(args.email)}"
+    if args.account:
+        path += f"&to_addr={urllib.parse.quote(args.account)}"
+    events = _get(path)
     if not events:
         print(f"No emails from '{args.email}'.")
         return
@@ -117,14 +128,31 @@ def cmd_sender(args):
 
 
 def cmd_senders(args):
-    senders = _get("/api/senders")
+    path = "/api/senders"
+    if args.account:
+        path += f"?to_addr={urllib.parse.quote(args.account)}"
+    senders = _get(path)
     if not senders:
         print("No senders found.")
         return
-    print(f"{'Sender':<40} {'Emails':>6} {'Injections':>11} {'Last seen'}")
-    print(f"{'-'*40} {'-'*6} {'-'*11} {'-'*20}")
+    label = f" for {args.account}" if args.account else ""
+    print(f"Senders{label}:")
+    print(f"  {'Address':<40} {'Emails':>6} {'Injections':>11} {'Last seen'}")
+    print(f"  {'-'*40} {'-'*6} {'-'*11} {'-'*20}")
     for s in senders:
-        print(f"{s['from_addr']:<40} {s['total']:>6} {s['injections']:>11} {s['last_seen'][:19]}")
+        print(f"  {s['from_addr']:<40} {s['total']:>6} {s['injections']:>11} {s['last_seen'][:19]}")
+
+
+def cmd_accounts(args):
+    accounts = _get("/api/accounts")
+    if not accounts:
+        print("No accounts found. (to_addr may not be populated for older emails)")
+        return
+    print("Connected accounts (inboxes):")
+    print(f"  {'Address':<40} {'Emails':>6} {'Injections':>11} {'Last seen'}")
+    print(f"  {'-'*40} {'-'*6} {'-'*11} {'-'*20}")
+    for a in accounts:
+        print(f"  {a['to_addr']:<40} {a['total']:>6} {a['injections']:>11} {a['last_seen'][:19]}")
 
 
 def cmd_risky(args):
@@ -197,16 +225,22 @@ def main():
 
     p_recent = sub.add_parser("recent", help="List recent emails")
     p_recent.add_argument("--limit", type=int, default=10)
-    p_recent.add_argument("--from", dest="from_addr", default=None, metavar="EMAIL", help="Filter by sender address (partial match)")
+    p_recent.add_argument("--from", dest="from_addr", default=None, metavar="EMAIL", help="Filter by sender (partial match)")
+    p_recent.add_argument("--account", default=None, metavar="EMAIL", help="Filter by recipient inbox (partial match)")
     p_recent.set_defaults(func=cmd_recent)
 
     p_sender = sub.add_parser("sender", help="List emails from a specific sender")
     p_sender.add_argument("email", help="Sender email address (partial match)")
     p_sender.add_argument("--limit", type=int, default=20)
+    p_sender.add_argument("--account", default=None, metavar="EMAIL", help="Scope to a specific inbox")
     p_sender.set_defaults(func=cmd_sender)
 
     p_senders = sub.add_parser("senders", help="List all senders with email counts")
+    p_senders.add_argument("--account", default=None, metavar="EMAIL", help="Scope to a specific inbox")
     p_senders.set_defaults(func=cmd_senders)
+
+    p_accounts = sub.add_parser("accounts", help="List all connected email accounts (inboxes)")
+    p_accounts.set_defaults(func=cmd_accounts)
 
     p_risky = sub.add_parser("risky", help="List risky emails")
     p_risky.add_argument("--min-score", type=int, default=1)
