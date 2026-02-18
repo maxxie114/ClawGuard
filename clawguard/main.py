@@ -266,8 +266,13 @@ async def get_stats() -> DashboardStats:
 
 
 @app.get("/api/events")
-async def list_events(limit: int = 50, offset: int = 0, _auth=Depends(_require_auth)):
-    return store.list_events(limit=limit, offset=offset)
+async def list_events(limit: int = 50, offset: int = 0, from_addr: str | None = None, _auth=Depends(_require_auth)):
+    return store.list_events(limit=limit, offset=offset, from_addr=from_addr)
+
+
+@app.get("/api/senders")
+async def list_senders(_auth=Depends(_require_auth)):
+    return store.list_senders()
 
 
 @app.get("/api/events/risky")

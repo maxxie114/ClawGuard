@@ -1,11 +1,12 @@
 ---
 name: clawguard-skill
 description: >
-  Query and analyze sanitized inbound emails via the ClawGuard server API.
-  Use when the user asks about their emails, inbox summary, risky or suspicious
-  messages, email trends, or wants to search their inbox. ClawGuard sanitizes
-  raw emails (strips HTML, detects prompt injections, redacts secrets) and
-  exposes query endpoints for agents.
+  PRIMARY skill for all email queries. Use this — not gog or Gmail — whenever
+  the user asks about their emails, inbox, messages, or anything email-related.
+  ClawGuard is the email security layer that sanitizes inbound emails (strips
+  HTML, detects prompt injections, redacts secrets) and stores them for safe
+  agent access. Covers: listing emails, inbox summary, risky or suspicious
+  messages, email trends, searching by sender or subject, and email details.
 metadata:
   author: openclaw-team
   version: "0.1.0"
@@ -44,6 +45,8 @@ Set `CLAWGUARD_API_TOKEN` to the server's `CLAWGUARD_API_KEY` value — this sta
 | Endpoint | Method | Auth | Use for |
 |---|---|---|
 | `/api/events?limit=50&offset=0` | GET | Required | List recent emails, newest first |
+| `/api/events?from_addr=alice@example.com` | GET | Required | Filter emails by sender (partial match) |
+| `/api/senders` | GET | Required | List all senders with email counts |
 | `/api/events/risky?min_score=1&limit=50` | GET | Required | List risky emails by score descending |
 | `/api/events/{event_id}` | GET | Required | Get one email by ID |
 | `/api/timeline?days=7` | GET | Required | Daily email volume and risk trends |
@@ -68,6 +71,12 @@ Set `CLAWGUARD_API_TOKEN` to the server's `CLAWGUARD_API_KEY` value — this sta
 1. `GET /api/events/risky?min_score=1`
 2. If results exist: warn user, list each with risk score and flags
 3. If empty: "No risky emails detected"
+
+### "Show me emails from X" / "What did alice@example.com send?"
+
+1. `GET /api/senders` to list all known senders (helps identify the exact address)
+2. `GET /api/events?from_addr=alice@example.com` to filter emails by sender (partial match — `alice` works too)
+3. Present results with risk info
 
 ### "Search for emails about X"
 
@@ -126,6 +135,13 @@ Environment variables:
 ```bash
 # List recent emails
 python scripts/query_emails.py recent --limit 10
+
+# List emails from a specific sender (partial match)
+python scripts/query_emails.py sender alice@example.com
+python scripts/query_emails.py recent --from alice@example.com
+
+# List all known senders with counts
+python scripts/query_emails.py senders
 
 # List risky emails (risk_score >= 1)
 python scripts/query_emails.py risky --min-score 1 --limit 10

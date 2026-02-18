@@ -91,12 +91,32 @@ class EventStore:
                 return dict(row)
         return None
 
-    def list_events(self, limit: int = 50, offset: int = 0) -> list[dict]:
-        """List events ordered by received_at descending."""
+    def list_events(self, limit: int = 50, offset: int = 0, from_addr: str | None = None) -> list[dict]:
+        """List events ordered by received_at descending, optionally filtered by sender."""
+        with self._conn() as conn:
+            if from_addr:
+                rows = conn.execute(
+                    "SELECT * FROM sanitized_events WHERE from_addr LIKE ? ORDER BY received_at DESC LIMIT ? OFFSET ?",
+                    (f"%{from_addr}%", limit, offset),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM sanitized_events ORDER BY received_at DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def list_senders(self) -> list[dict]:
+        """List unique senders with email counts."""
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM sanitized_events ORDER BY received_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
+                """SELECT from_addr,
+                          COUNT(*) as total,
+                          SUM(CASE WHEN injection_detected = 1 THEN 1 ELSE 0 END) as injections,
+                          MAX(received_at) as last_seen
+                   FROM sanitized_events
+                   GROUP BY from_addr
+                   ORDER BY total DESC"""
             ).fetchall()
             return [dict(r) for r in rows]
 
