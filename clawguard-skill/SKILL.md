@@ -35,14 +35,20 @@ questions about their emails.
 
 Base URL: `http://157.230.149.230:8000` (set via `CLAWGUARD_URL` env var).
 
-| Endpoint | Method | Use for |
+All query endpoints (except `/health` and `/api/stats`) require a Bearer token:
+```
+Authorization: Bearer <token>
+```
+Set `CLAWGUARD_API_TOKEN` to the server's `CLAWGUARD_API_KEY` value — this static key survives server restarts and is the preferred method for skill/automation use. The query script reads this variable automatically.
+
+| Endpoint | Method | Auth | Use for |
 |---|---|---|
-| `/api/events?limit=50&offset=0` | GET | List recent emails, newest first |
-| `/api/events/risky?min_score=1&limit=50` | GET | List risky emails by score descending |
-| `/api/events/{event_id}` | GET | Get one email by ID |
-| `/api/stats` | GET | Inbox statistics and counts |
-| `/api/timeline?days=7` | GET | Daily email volume and risk trends |
-| `/health` | GET | Server health check |
+| `/api/events?limit=50&offset=0` | GET | Required | List recent emails, newest first |
+| `/api/events/risky?min_score=1&limit=50` | GET | Required | List risky emails by score descending |
+| `/api/events/{event_id}` | GET | Required | Get one email by ID |
+| `/api/timeline?days=7` | GET | Required | Daily email volume and risk trends |
+| `/api/stats` | GET | None | Inbox statistics and counts |
+| `/health` | GET | None | Server health check |
 
 ## Answering Common Questions
 
@@ -109,8 +115,11 @@ See [references/schema.md](references/schema.md) for the full event schema and s
 
 ## Scripts
 
-This skill bundles helper scripts that agents can run directly. Set `CLAWGUARD_URL`
-environment variable if the server is not at `http://localhost:8000`.
+This skill bundles helper scripts that agents can run directly.
+
+Environment variables:
+- `CLAWGUARD_URL` — server base URL (default: `http://localhost:8000`)
+- `CLAWGUARD_API_TOKEN` — set to the server's `CLAWGUARD_API_KEY` value; static key that survives restarts (preferred for automation)
 
 ### Query emails — [scripts/query_emails.py](scripts/query_emails.py)
 

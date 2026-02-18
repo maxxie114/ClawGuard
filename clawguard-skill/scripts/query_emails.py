@@ -11,7 +11,9 @@ Usage:
     python query_emails.py health
 
 Environment:
-    CLAWGUARD_URL  Base URL of the ClawGuard server (default: http://localhost:8000)
+    CLAWGUARD_URL            Base URL of the ClawGuard server (default: http://localhost:8000)
+    CLAWGUARD_API_TOKEN      Bearer token for authenticated API access
+    CLAWGUARD_ADMIN_PASSWORD Used to auto-obtain a token if CLAWGUARD_API_TOKEN is not set
 """
 
 import argparse
@@ -24,15 +26,46 @@ import urllib.parse
 
 BASE_URL = os.environ.get("CLAWGUARD_URL", "http://157.230.149.230:8000")
 
+# Resolve auth token: prefer explicit token, fall back to password-based login
+_API_TOKEN: str | None = os.environ.get("CLAWGUARD_API_TOKEN", "")
+
+
+def _resolve_token() -> str | None:
+    global _API_TOKEN
+    if _API_TOKEN:
+        return _API_TOKEN
+    password = os.environ.get("CLAWGUARD_ADMIN_PASSWORD", "")
+    if not password:
+        return None
+    url = BASE_URL.rstrip("/") + "/auth/login"
+    data = json.dumps({"password": password}).encode()
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode())
+            _API_TOKEN = result.get("token", "")
+            return _API_TOKEN or None
+    except Exception as e:
+        print(f"Auth failed: {e}", file=sys.stderr)
+        return None
+
 
 def _get(path: str) -> dict | list:
+    token = _resolve_token()
     url = BASE_URL.rstrip("/") + path
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        req = urllib.request.Request(url)
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        print(f"HTTP {e.code}: {e.read().decode()}", file=sys.stderr)
+        body = e.read().decode()
+        if e.code == 401:
+            print(f"HTTP 401: Unauthorized — set CLAWGUARD_API_TOKEN or CLAWGUARD_ADMIN_PASSWORD", file=sys.stderr)
+        else:
+            print(f"HTTP {e.code}: {body}", file=sys.stderr)
         sys.exit(1)
     except urllib.error.URLError as e:
         print(f"Connection error: {e.reason}", file=sys.stderr)

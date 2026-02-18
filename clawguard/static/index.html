@@ -252,6 +252,7 @@
   <div class="status">
     <div class="dot"></div>
     <span style="color:var(--green);font-size:13px">Active</span>
+    <button id="logout-btn" onclick="logout()" style="display:none;margin-left:12px;padding:4px 12px;background:transparent;border:1px solid var(--border);color:var(--text2);border-radius:6px;cursor:pointer;font-family:inherit;font-size:11px">Logout</button>
   </div>
 </div>
 
@@ -282,7 +283,7 @@
     <div class="test-result" id="test-result"></div>
   </div>
 
-  <div class="section">
+  <div class="section" id="gmail-section" style="display:none">
     <h2>Gmail Integration</h2>
     <div id="gmail-status" style="margin-bottom:16px;color:var(--text2)">Loading Gmail status...</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -314,6 +315,82 @@
 </div>
 
 <script>
+// --- Auth state ---
+var authToken = localStorage.getItem('clawguard_token') || null;
+
+function authHeaders() {
+  if (!authToken) return {};
+  return {'Authorization': 'Bearer ' + authToken};
+}
+
+async function authFetch(url, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers || {}, authHeaders());
+  return fetch(url, opts);
+}
+
+async function checkAuth() {
+  if (!authToken) return false;
+  try {
+    var resp = await fetch('/auth/check', {headers: authHeaders()});
+    var data = await resp.json();
+    return data.authenticated === true;
+  } catch(e) { return false; }
+}
+
+async function doLogin() {
+  var pw = prompt('Enter ClawGuard admin password:');
+  if (!pw) return false;
+  try {
+    var resp = await fetch('/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pw})
+    });
+    if (!resp.ok) {
+      alert('Wrong password.');
+      return false;
+    }
+    var data = await resp.json();
+    authToken = data.token;
+    localStorage.setItem('clawguard_token', authToken);
+    return true;
+  } catch(e) {
+    alert('Login failed: ' + e.message);
+    return false;
+  }
+}
+
+function logout() {
+  authToken = null;
+  localStorage.removeItem('clawguard_token');
+  applyAuthState(false);
+}
+
+function applyAuthState(loggedIn) {
+  document.getElementById('logout-btn').style.display = loggedIn ? 'inline-block' : 'none';
+  document.getElementById('gmail-section').style.display = loggedIn ? 'block' : 'none';
+  if (loggedIn) {
+    loadEvents();
+    loadGmailStatus();
+  } else {
+    document.getElementById('event-list').innerHTML =
+      '<div style="color:var(--text2);text-align:center;padding:40px">' +
+      'Login to view real emails. ' +
+      '<a href="#" onclick="initAuth();return false" style="color:var(--accent)">Login</a></div>';
+  }
+}
+
+async function initAuth() {
+  var valid = await checkAuth();
+  if (!valid) {
+    authToken = null;
+    localStorage.removeItem('clawguard_token');
+    valid = await doLogin();
+  }
+  applyAuthState(valid);
+}
+
 // NOTE: all angle brackets in test data use \x3c and \x3e to avoid
 // the browser mis-interpreting them as real HTML / closing script tags.
 var QUICK_TESTS = {
@@ -435,8 +512,10 @@ function esc(s) {
 }
 
 async function loadEvents() {
+  if (!authToken) return;
   try {
-    var resp = await fetch('/api/events?limit=50');
+    var resp = await authFetch('/api/events?limit=50');
+    if (resp.status === 401) { applyAuthState(false); return; }
     var events = await resp.json();
     var el = document.getElementById('event-list');
     if (!events.length) {
@@ -457,7 +536,7 @@ async function loadEvents() {
 
 async function showEvent(eventId) {
   try {
-    var resp = await fetch('/api/events/' + eventId);
+    var resp = await authFetch('/api/events/' + eventId);
     var e = await resp.json();
     document.getElementById('modal-title').textContent = 'Event: ' + e.event_id.slice(0, 8) + '...';
 
@@ -513,8 +592,9 @@ document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close
 
 // Gmail functions
 async function loadGmailStatus() {
+  if (!authToken) return;
   try {
-    var resp = await fetch('/gmail/status');
+    var resp = await authFetch('/gmail/status');
     var s = await resp.json();
     var el = document.getElementById('gmail-status');
     if (!s.enabled) {
@@ -539,7 +619,7 @@ async function gmailFetch() {
   btn.disabled = true;
   btn.textContent = 'Fetching...';
   try {
-    var resp = await fetch('/gmail/fetch', {method:'POST'});
+    var resp = await authFetch('/gmail/fetch', {method:'POST'});
     var data = await resp.json();
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
@@ -558,7 +638,7 @@ async function gmailSetupWatch() {
   var result = document.getElementById('gmail-result');
   btn.disabled = true;
   try {
-    var resp = await fetch('/gmail/setup-watch', {method:'POST'});
+    var resp = await authFetch('/gmail/setup-watch', {method:'POST'});
     var data = await resp.json();
     result.style.display = 'block';
     result.textContent = JSON.stringify(data, null, 2);
@@ -573,11 +653,10 @@ async function gmailSetupWatch() {
 // Initial load
 loadQuickTest('injection');
 loadStats();
-loadEvents();
-loadGmailStatus();
+initAuth();
 
-// Auto-refresh
-setInterval(function() { loadStats(); loadEvents(); }, 10000);
+// Auto-refresh (stats always; events only when logged in)
+setInterval(function() { loadStats(); if (authToken) loadEvents(); }, 10000);
 </script>
 </body>
 </html>

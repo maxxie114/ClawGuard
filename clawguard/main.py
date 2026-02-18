@@ -13,11 +13,12 @@ import hmac
 import json
 import logging
 import time
+import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Header, Request
+from fastapi import Depends, FastAPI, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -84,6 +85,26 @@ def _check_rate_limit(client_ip: str) -> bool:
     return True
 
 
+# --- Auth (in-memory token store) ---
+
+_auth_tokens: set[str] = set()
+
+
+def _require_auth(authorization: str | None = Header(None)):
+    """Dependency that validates Bearer token on protected routes.
+
+    Accepts either:
+    - The static API key (config.api_key) — survives restarts, for skill/automation use
+    - An ephemeral UI session token from /auth/login — for dashboard use
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    token = authorization[len("Bearer "):]
+    if token == config.api_key or token in _auth_tokens:
+        return
+    raise HTTPException(status_code=401, detail="Invalid token")
+
+
 def _verify_signature(payload: bytes, signature: str | None, secret: str) -> bool:
     if not secret or not config.require_verification:
         return True
@@ -116,6 +137,31 @@ def _mask_raw_payload(payload: dict[str, Any]) -> str:
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+# --- Auth endpoints ---
+
+@app.post("/auth/login")
+async def auth_login(request: Request):
+    """Validate admin password and return a session token."""
+    body = await request.json()
+    password = body.get("password", "")
+    if not password or password != config.admin_password:
+        raise HTTPException(status_code=401, detail="Wrong password")
+    token = str(uuid.uuid4())
+    _auth_tokens.add(token)
+    logger.info("Admin login successful — new token issued")
+    return {"token": token}
+
+
+@app.get("/auth/check")
+async def auth_check(authorization: str | None = Header(None)):
+    """Quick check whether a token is still valid."""
+    try:
+        _require_auth(authorization)
+    except HTTPException:
+        return {"authenticated": False}
+    return {"authenticated": True}
 
 
 # --- Webhook ingestion ---
@@ -220,17 +266,17 @@ async def get_stats() -> DashboardStats:
 
 
 @app.get("/api/events")
-async def list_events(limit: int = 50, offset: int = 0):
+async def list_events(limit: int = 50, offset: int = 0, _auth=Depends(_require_auth)):
     return store.list_events(limit=limit, offset=offset)
 
 
 @app.get("/api/events/risky")
-async def list_risky_events(min_score: int = 1, limit: int = 50):
+async def list_risky_events(min_score: int = 1, limit: int = 50, _auth=Depends(_require_auth)):
     return store.list_risky_events(min_score=min_score, limit=limit)
 
 
 @app.get("/api/events/{event_id}")
-async def get_event(event_id: str):
+async def get_event(event_id: str, _auth=Depends(_require_auth)):
     event = store.get_event(event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
@@ -238,7 +284,7 @@ async def get_event(event_id: str):
 
 
 @app.get("/api/timeline")
-async def get_timeline(days: int = 7):
+async def get_timeline(days: int = 7, _auth=Depends(_require_auth)):
     return store.get_timeline(days=days)
 
 
@@ -329,7 +375,7 @@ async def gmail_pubsub_push(request: Request):
 
 
 @app.post("/gmail/fetch")
-async def gmail_fetch_recent(max_results: int = 10, query: str = "in:inbox"):
+async def gmail_fetch_recent(max_results: int = 10, query: str = "in:inbox", _auth=Depends(_require_auth)):
     """Manually trigger a fetch of recent Gmail messages.
 
     The skill or admin can call this to pull latest emails on demand.
@@ -369,7 +415,7 @@ async def gmail_fetch_recent(max_results: int = 10, query: str = "in:inbox"):
 
 
 @app.post("/gmail/setup-watch")
-async def gmail_setup_watch():
+async def gmail_setup_watch(_auth=Depends(_require_auth)):
     """Set up Gmail Pub/Sub watch for real-time notifications.
 
     Requires GCP_PUBSUB_TOPIC to be configured.
@@ -395,7 +441,7 @@ async def gmail_setup_watch():
 
 
 @app.get("/gmail/status")
-async def gmail_status():
+async def gmail_status(_auth=Depends(_require_auth)):
     """Check Gmail integration status."""
     return {
         "enabled": config.gmail_enabled,
