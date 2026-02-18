@@ -2,7 +2,7 @@
 set -e
 
 SERVER="root@157.230.149.230"
-REMOTE_DIR="~/ClawGuard"
+REMOTE_DIR="/opt/ClawGuard"
 
 echo "==> Pushing local changes..."
 git push
@@ -10,10 +10,10 @@ git push
 echo "==> Deploying to $SERVER..."
 ssh "$SERVER" bash -s << 'EOF'
   set -e
-  cd ~/ClawGuard
+  cd /opt/ClawGuard
   git pull
   source .venv/bin/activate 2>/dev/null || true
-  pip install -q -e . 2>/dev/null || true
+  pip install -q -r requirements.txt 2>/dev/null || true
 
   # Detect process manager and restart
   if systemctl is-active --quiet clawguard 2>/dev/null; then
