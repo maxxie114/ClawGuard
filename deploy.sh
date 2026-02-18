@@ -11,7 +11,9 @@ echo "==> Deploying to $SERVER..."
 ssh "$SERVER" bash -s << 'EOF'
   set -e
   cd /opt/ClawGuard
-  git pull
+  git fetch origin
+  git checkout main
+  git pull origin main
   source .venv/bin/activate 2>/dev/null || true
   pip install -q -r requirements.txt 2>/dev/null || true
 
