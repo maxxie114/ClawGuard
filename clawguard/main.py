@@ -869,7 +869,15 @@ async def gmail_fetch_recent(
         raw_emails = gmail.fetch_recent_messages(max_results=max_results, query=query)
 
         results = []
+        skipped = 0
         for raw in raw_emails:
+            to_addr = raw.to_addrs[0] if raw.to_addrs else ""
+            received_at = raw.timestamp or ""
+            subject = raw.subject or ""
+            if store.event_exists(raw.from_address, to_addr, received_at, subject):
+                skipped += 1
+                continue
+
             sanitized = await _process_and_store(raw, user_id=user["id"])
             results.append({
                 "event_id": sanitized.event_id,
@@ -879,7 +887,7 @@ async def gmail_fetch_recent(
                 "injection_detected": sanitized.risk.injection_detected,
             })
 
-        return {"status": "fetched", "total_fetched": len(results), "results": results}
+        return {"status": "fetched", "total_fetched": len(results), "skipped_duplicates": skipped, "results": results}
 
     except HTTPException:
         raise
@@ -940,6 +948,60 @@ async def gmail_status(user: dict = Depends(_get_current_user)):
         "account_count": len(accounts),
         "pubsub_topic": config.gcp_pubsub_topic or None,
     }
+
+
+# ============================================================
+# Cron-friendly endpoint — fetch all Gmail accounts
+# ============================================================
+
+@app.post("/gmail/fetch-all")
+async def gmail_fetch_all(request: Request):
+    """Fetch new emails for ALL connected Gmail accounts.
+
+    Localhost-only — intended to be called by a cron job on the server.
+    Example cron (every 5 min):
+        */5 * * * * curl -s -X POST http://127.0.0.1:8000/gmail/fetch-all
+    """
+    # Only allow from localhost
+    client_ip = request.client.host if request.client else ""
+    if client_ip not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status_code=403, detail="Localhost only")
+
+    if not config.gmail_enabled:
+        raise HTTPException(status_code=404, detail="Gmail integration not enabled")
+
+    all_accounts = user_store.get_all_gmail_tokens()
+    if not all_accounts:
+        return {"status": "ok", "message": "No Gmail accounts connected"}
+
+    results = {}
+    for acct in all_accounts:
+        user_id = acct["user_id"]
+        gmail_email = acct["gmail_email"]
+        try:
+            gmail = _get_gmail_client_for_user(user_id, gmail_email)
+            raw_emails = gmail.fetch_recent_messages(max_results=20, query="in:inbox newer_than:1h")
+
+            new_count = 0
+            for raw in raw_emails:
+                to_addr = raw.to_addrs[0] if raw.to_addrs else ""
+                received_at = raw.timestamp or ""
+                subject = raw.subject or ""
+                if store.event_exists(raw.from_address, to_addr, received_at, subject):
+                    continue
+                await _process_and_store(raw, user_id=user_id)
+                new_count += 1
+
+            results[gmail_email] = {"new_emails": new_count, "status": "ok"}
+            if new_count > 0:
+                logger.info(f"Gmail fetch-all: {new_count} new email(s) for {gmail_email}")
+
+        except Exception as e:
+            logger.error(f"Gmail fetch-all failed for {gmail_email}: {e}")
+            results[gmail_email] = {"new_emails": 0, "status": "error", "error": str(e)}
+
+    total_new = sum(r["new_emails"] for r in results.values())
+    return {"status": "ok", "accounts": len(results), "total_new_emails": total_new, "details": results}
 
 
 # ============================================================
