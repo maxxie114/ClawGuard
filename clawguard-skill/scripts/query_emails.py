@@ -14,10 +14,8 @@ Usage:
     python query_emails.py health
 
 Environment:
-    CLAWGUARD_URL       Base URL of the ClawGuard server (default: https://claw-guard.tech)
-    CLAWGUARD_API_TOKEN API key (cg_xxxxx) or JWT access token — preferred for automation
-    CLAWGUARD_EMAIL     Login email (fallback if no token set)
-    CLAWGUARD_PASSWORD  Login password (fallback if no token set)
+    CLAWGUARD_URL            Base URL of the ClawGuard server (default: https://claw-guard.tech)
+    CLAWGUARD_API_TOKEN      Bearer token (cg_ prefix) for authenticated API access
 """
 
 import argparse
@@ -30,37 +28,14 @@ import urllib.parse
 
 BASE_URL = os.environ.get("CLAWGUARD_URL", "https://claw-guard.tech")
 
-# Resolve auth token: prefer explicit token, fall back to email+password login
-_API_TOKEN: str | None = os.environ.get("CLAWGUARD_API_TOKEN", "")
-
-
-def _resolve_token() -> str | None:
-    global _API_TOKEN
-    if _API_TOKEN:
-        return _API_TOKEN
-    email = os.environ.get("CLAWGUARD_EMAIL", "")
-    password = os.environ.get("CLAWGUARD_PASSWORD", "")
-    if not email or not password:
-        return None
-    url = BASE_URL.rstrip("/") + "/auth/login"
-    data = json.dumps({"email": email, "password": password}).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = json.loads(resp.read().decode())
-            _API_TOKEN = result.get("access_token", "")
-            return _API_TOKEN or None
-    except Exception as e:
-        print(f"Auth failed: {e}", file=sys.stderr)
-        return None
+_API_TOKEN: str | None = os.environ.get("CLAWGUARD_API_TOKEN", "") or None
 
 
 def _get(path: str) -> dict | list:
-    token = _resolve_token()
     url = BASE_URL.rstrip("/") + path
     headers = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    if _API_TOKEN:
+        headers["Authorization"] = f"Bearer {_API_TOKEN}"
     try:
         req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -68,7 +43,7 @@ def _get(path: str) -> dict | list:
     except urllib.error.HTTPError as e:
         body = e.read().decode()
         if e.code == 401:
-            print(f"HTTP 401: Unauthorized — set CLAWGUARD_API_TOKEN or CLAWGUARD_EMAIL + CLAWGUARD_PASSWORD", file=sys.stderr)
+            print(f"HTTP 401: Unauthorized — set CLAWGUARD_API_TOKEN (cg_ prefix)", file=sys.stderr)
         else:
             print(f"HTTP {e.code}: {body}", file=sys.stderr)
         sys.exit(1)
@@ -85,7 +60,6 @@ def _print_email_summary(event: dict) -> None:
     print(f"  [{risk_score:>3}/100]{marker}")
     print(f"  ID:      {event.get('event_id', 'N/A')}")
     print(f"  From:    {event.get('from_addr', 'N/A')}")
-    print(f"  To:      {event.get('to_addr', 'N/A')}")
     print(f"  Subject: {event.get('subject_sanitized', 'N/A')}")
     print(f"  Time:    {event.get('received_at', 'N/A')}")
     flags = event.get("risk_flags", "[]")

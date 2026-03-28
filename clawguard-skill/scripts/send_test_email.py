@@ -16,7 +16,7 @@ import sys
 import urllib.request
 import urllib.error
 
-BASE_URL = os.environ.get("CLAWGUARD_URL", "http://157.230.149.230:8000")
+BASE_URL = os.environ.get("CLAWGUARD_URL", "https://claw-guard.tech")
 
 SAMPLE_CLEAN = {
     "from": "alice@example.com",
