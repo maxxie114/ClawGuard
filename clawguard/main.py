@@ -569,10 +569,18 @@ async def gmail_auth_start(request: Request, user: dict = Depends(_get_current_u
         )
 
     try:
+        # Build redirect URI respecting X-Forwarded-Proto from nginx
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        base = f"{scheme}://{request.url.hostname}"
+        if request.url.port and request.url.port not in (80, 443):
+            base += f":{request.url.port}"
+        redirect_uri = base + "/gmail/auth/callback"
+
+        scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
         flow = Flow.from_client_secrets_file(
             str(config.gmail_credentials_path),
-            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
-            redirect_uri=str(request.base_url).rstrip('/') + "/gmail/auth/callback",
+            scopes=scopes,
+            redirect_uri=redirect_uri,
         )
 
         auth_url, state = flow.authorization_url(
@@ -586,8 +594,8 @@ async def gmail_auth_start(request: Request, user: dict = Depends(_get_current_u
             "user_id": user["id"],
             "flow_data": {
                 "client_config": flow.client_config,
-                "scopes": flow.scopes,
-                "redirect_uri": flow.redirect_uri,
+                "scopes": scopes,
+                "redirect_uri": redirect_uri,
             },
         }
 
