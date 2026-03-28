@@ -53,6 +53,12 @@ Domain: claw-guard.tech
 - [x] 6.4 HTTP → HTTPS redirect
 - [x] 6.5 Deploy script updated (preserves certbot SSL config)
 
+## Bugs & Improvements (TODO)
+- [ ] Stricter login rate limiting (5/min + exponential backoff or temporary account lockout)
+- [ ] Use non-guessable admin email (GitHub username + landing page domain make it easy to guess)
+- [ ] Upload Google OAuth credentials JSON via admin UI (2.1)
+- [ ] Admin sees all Gmail accounts; regular users see only their own (2.5)
+
 ## What's NOT in MVP (deferred to PRODUCTION_TODO.md)
 - Self-signup / email verification (future: WorkOS)
 - Password reset flow
