@@ -40,20 +40,27 @@ Inbound Webhook
 
 ## Roadmap
 
-### Phase 1 — Email Ingestion (Hackathon Scope)
+### Phase 1 — Email Ingestion ✅ COMPLETE
 
 - Email webhook endpoint
 - Shared-secret verification
 - Canonical `EmailEvent` schema
 - Sanitization pipeline: HTML stripping, Unicode cleanup, injection pattern detection, truncation, attachment allowlist
 - Sanitized JSON output to downstream agent
+- **Web-based Gmail OAuth** — Connect Gmail directly from UI without SSH
 
-### Phase 2 — GitHub Ingestion
+### Phase 2 — GitHub Ingestion (In Progress)
 
 - GitHub webhook ingestion
 - Diff truncation and markdown sanitization
 - Secret scanning
 - Repo-level risk scoring
+
+### Phase 3 — Multi-Account Support ✅ COMPLETE
+
+- Multi-inbox support — Query emails per account (`/api/accounts`, `to_addr` filtering)
+- Per-account sender lists and statistics
+- CLI support for account filtering (`--account` flag)
 
 ## Getting Started
 
