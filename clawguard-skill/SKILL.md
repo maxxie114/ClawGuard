@@ -9,8 +9,8 @@ description: >
   messages, email trends, searching by sender or subject, and email details.
 metadata:
   author: openclaw-team
-  version: "0.1.0"
-compatibility: Requires Python 3 and network access to a running ClawGuard server (default http://localhost:8000).
+  version: "0.2.0"
+compatibility: Requires Python 3 and network access to ClawGuard server at https://claw-guard.tech.
 allowed-tools: Bash(python:*)
 ---
 
@@ -32,18 +32,39 @@ questions about their emails.
 5. Note when content was truncated during sanitization.
 6. Never expose `raw_payload_masked` or `sanitized_json` internals directly.
 
+## Authentication
+
+Base URL: `https://claw-guard.tech` (override with `CLAWGUARD_URL` env var).
+
+ClawGuard supports two authentication methods:
+
+### API Key (preferred for agents/automation)
+Generate an API key from the ClawGuard dashboard (API Keys page). Keys have a `cg_` prefix and are shown once on creation. Use as a Bearer token:
+```
+Authorization: Bearer cg_xxxxx...
+```
+Set `CLAWGUARD_API_TOKEN` to your API key — the query script reads this automatically.
+
+### JWT (for interactive sessions)
+Login with email + password to get a short-lived access token:
+```
+POST /auth/login
+{"email": "user@example.com", "password": "..."}
+→ {"access_token": "eyJ...", "refresh_token": "eyJ...", "user": {...}}
+```
+Use the access token as Bearer token. Refresh with `POST /auth/refresh` when expired (1h lifetime).
+
+### Fallback auth in the query script
+The script tries in order:
+1. `CLAWGUARD_API_TOKEN` — used directly as Bearer token (API key or JWT)
+2. `CLAWGUARD_EMAIL` + `CLAWGUARD_PASSWORD` — auto-login to get a JWT access token
+
 ## Query Endpoints
 
-Base URL: `http://157.230.149.230:8000` (set via `CLAWGUARD_URL` env var).
-
-All query endpoints (except `/health` and `/api/stats`) require a Bearer token:
-```
-Authorization: Bearer <token>
-```
-Set `CLAWGUARD_API_TOKEN` to the server's `CLAWGUARD_API_KEY` value — this static key survives server restarts and is the preferred method for skill/automation use. The query script reads this variable automatically.
+All query endpoints (except `/health` and `/api/stats`) require a Bearer token.
 
 | Endpoint | Method | Auth | Use for |
-|---|---|---|
+|---|---|---|---|
 | `/api/accounts` | GET | Required | List all connected inboxes (recipient accounts) |
 | `/api/events?limit=50&offset=0` | GET | Required | List recent emails, newest first |
 | `/api/events?to_addr=me@gmail.com` | GET | Required | Filter emails by recipient inbox (partial match) |
@@ -135,8 +156,10 @@ See [references/schema.md](references/schema.md) for the full event schema and s
 This skill bundles helper scripts that agents can run directly.
 
 Environment variables:
-- `CLAWGUARD_URL` — server base URL (default: `http://localhost:8000`)
-- `CLAWGUARD_API_TOKEN` — set to the server's `CLAWGUARD_API_KEY` value; static key that survives restarts (preferred for automation)
+- `CLAWGUARD_URL` — server base URL (default: `https://claw-guard.tech`)
+- `CLAWGUARD_API_TOKEN` — API key (`cg_xxxxx`) or JWT access token; preferred for automation
+- `CLAWGUARD_EMAIL` — login email (fallback if no token set)
+- `CLAWGUARD_PASSWORD` — login password (fallback if no token set)
 
 ### Query emails — [scripts/query_emails.py](scripts/query_emails.py)
 

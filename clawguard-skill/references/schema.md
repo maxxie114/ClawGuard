@@ -11,6 +11,7 @@ Each event returned by the API contains these fields:
 | `provider` | string | Email provider (e.g. `"generic"`, `"gmail"`) |
 | `received_at` | string | ISO 8601 timestamp |
 | `from_addr` | string | Sender email address |
+| `to_addr` | string | Recipient email address (inbox this email was fetched from) |
 | `subject_sanitized` | string | Sanitized subject line |
 | `body_sanitized` | string | Sanitized body text (HTML stripped, secrets redacted) |
 | `risk_flags` | string | JSON array of risk flag strings |
@@ -19,6 +20,7 @@ Each event returned by the API contains these fields:
 | `risk_score` | integer | Composite risk score from 0 to 100 |
 | `raw_payload_masked` | string or null | Masked version of raw payload (do not expose to user) |
 | `sanitized_json` | string | Full `SanitizedEmailEvent` serialized as JSON |
+| `user_id` | integer or null | ID of the user who owns this event (for per-user scoping) |
 | `created_at` | string | ISO 8601 timestamp when record was created |
 
 ## Stats Response (from `/api/stats`)
