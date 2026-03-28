@@ -633,8 +633,12 @@ async def gmail_auth_callback(request: Request, state: str, code: str | None = N
         user_id = state_data["user_id"]
         flow_data = state_data["flow_data"]
 
+        # client_config needs the "web" wrapper for from_client_config
+        client_config = flow_data["client_config"]
+        if "web" not in client_config and "installed" not in client_config:
+            client_config = {"web": client_config}
         flow = Flow.from_client_config(
-            flow_data["client_config"],
+            client_config,
             scopes=flow_data["scopes"],
             redirect_uri=flow_data["redirect_uri"],
         )
