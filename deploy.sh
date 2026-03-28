@@ -4,10 +4,7 @@ set -e
 SERVER="root@157.230.149.230"
 REMOTE_DIR="/opt/ClawGuard"
 
-echo "==> Pushing local changes..."
-git push
-
-echo "==> Deploying to $SERVER..."
+echo "==> Deploying to $SERVER (pull + restart only)..."
 ssh "$SERVER" bash -s << 'EOF'
   set -e
   cd /opt/ClawGuard
