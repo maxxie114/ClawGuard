@@ -585,7 +585,6 @@ async def gmail_auth_start(request: Request, user: dict = Depends(_get_current_u
 
         auth_url, state = flow.authorization_url(
             access_type='offline',
-            include_granted_scopes='true',
             prompt='consent',
         )
 
@@ -643,6 +642,9 @@ async def gmail_auth_callback(request: Request, state: str, code: str | None = N
             redirect_uri=flow_data["redirect_uri"],
         )
 
+        # Don't fail if Google returns additional scopes (e.g. from previous grants)
+        import os
+        os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
         flow.fetch_token(code=code)
         creds = flow.credentials
 
