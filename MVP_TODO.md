@@ -59,6 +59,12 @@ Domain: claw-guard.tech
 - [ ] Upload Google OAuth credentials JSON via admin UI (2.1)
 - [ ] Admin sees all Gmail accounts; regular users see only their own (2.5)
 
+## Google OAuth App Status
+- Currently in "Testing" mode — only manually added test users can connect Gmail
+- Each beta user's Gmail must be added as a test user in GCP Console
+- To allow any Gmail user: publish the app and pass Google verification (sensitive scope: gmail.readonly)
+- For closed beta, manually adding test users in GCP is sufficient
+
 ## What's NOT in MVP (deferred to PRODUCTION_TODO.md)
 - Self-signup / email verification (future: WorkOS)
 - Password reset flow
@@ -66,3 +72,4 @@ Domain: claw-guard.tech
 - Account deletion / data export
 - Per-user webhook secrets
 - CSRF tokens (mitigated by JWT in Authorization header for now)
+- Google OAuth app verification (required to remove "unverified app" warning and test user limit)
