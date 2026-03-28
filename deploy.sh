@@ -14,15 +14,13 @@ ssh "$SERVER" bash -s << 'EOF'
   source .venv/bin/activate 2>/dev/null || true
   pip install -q -r requirements.txt 2>/dev/null || true
 
-  # Setup nginx if not already configured
-  if [ -f nginx/clawguard.conf ]; then
-    if ! diff -q nginx/clawguard.conf /etc/nginx/sites-available/clawguard.conf &>/dev/null 2>&1; then
-      echo "Updating nginx config..."
-      cp nginx/clawguard.conf /etc/nginx/sites-available/clawguard.conf
-      ln -sf /etc/nginx/sites-available/clawguard.conf /etc/nginx/sites-enabled/clawguard.conf
-      rm -f /etc/nginx/sites-enabled/default
-      nginx -t && systemctl reload nginx
-    fi
+  # Setup nginx only if no config exists yet (don't overwrite certbot SSL config)
+  if [ -f nginx/clawguard.conf ] && [ ! -f /etc/nginx/sites-available/clawguard.conf ]; then
+    echo "Installing initial nginx config..."
+    cp nginx/clawguard.conf /etc/nginx/sites-available/clawguard.conf
+    ln -sf /etc/nginx/sites-available/clawguard.conf /etc/nginx/sites-enabled/clawguard.conf
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t && systemctl reload nginx
   fi
 
   # Restart the API server
@@ -44,4 +42,4 @@ ssh "$SERVER" bash -s << 'EOF'
 EOF
 
 echo "==> Checking health..."
-curl -sf http://157.230.149.230:8000/health && echo " OK" || echo " FAILED (may need a few more seconds)"
+curl -sf https://claw-guard.tech/health && echo " OK" || echo " FAILED (may need a few more seconds)"
