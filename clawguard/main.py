@@ -962,11 +962,11 @@ async def gmail_fetch_all(request: Request):
     Example cron (every 5 min):
         */5 * * * * curl -s -X POST http://127.0.0.1:8000/gmail/fetch-all
     """
-    # Only allow from localhost — check X-Real-IP/X-Forwarded-For (set by nginx) to detect proxied external requests
-    real_ip = request.headers.get("x-real-ip", "") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-    client_ip = real_ip or (request.client.host if request.client else "")
-    if client_ip not in ("127.0.0.1", "::1", "localhost"):
-        raise HTTPException(status_code=403, detail="Localhost only")
+    # Require secret token — prevents unauthorized access even if endpoint is discovered
+    cron_secret = os.environ.get("CLAWGUARD_CRON_SECRET", "")
+    provided_secret = request.headers.get("x-cron-secret", "")
+    if not cron_secret or not hmac.compare_digest(cron_secret, provided_secret):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     if not config.gmail_enabled:
         raise HTTPException(status_code=404, detail="Gmail integration not enabled")
