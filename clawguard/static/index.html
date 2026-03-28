@@ -286,6 +286,11 @@
   <div class="section" id="gmail-section" style="display:none">
     <h2>Gmail Integration</h2>
     <div id="gmail-status" style="margin-bottom:16px;color:var(--text2)">Loading Gmail status...</div>
+    <div id="gmail-connect-panel" style="display:none;margin-bottom:16px;padding:16px;background:var(--surface2);border-radius:8px;">
+      <p style="margin-bottom:12px;color:var(--text)">Connect your Gmail account to enable automatic email processing:</p>
+      <button class="btn-primary" onclick="gmailStartWebAuth()" id="gmail-connect-btn">Connect Gmail Account</button>
+      <div id="gmail-auth-result" style="margin-top:12px;font-size:13px;"></div>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn-primary" onclick="gmailFetch()" id="gmail-fetch-btn">Fetch Latest Emails</button>
       <button class="quick-test-btn" onclick="gmailSetupWatch()" id="gmail-watch-btn" style="padding:8px 16px;font-size:13px">Setup Pub/Sub Watch</button>
@@ -597,20 +602,116 @@ async function loadGmailStatus() {
     var resp = await authFetch('/gmail/status');
     var s = await resp.json();
     var el = document.getElementById('gmail-status');
+    var connectPanel = document.getElementById('gmail-connect-panel');
+    
     if (!s.enabled) {
       el.innerHTML = '<span style="color:var(--gray)">Gmail integration disabled. Set GMAIL_ENABLED=true to enable.</span>';
+      connectPanel.style.display = 'none';
+      document.getElementById('gmail-fetch-btn').disabled = true;
+      document.getElementById('gmail-watch-btn').disabled = true;
+    } else if (!s.authenticated && s.credentials_exist) {
+      // Credentials exist but not authenticated - show web auth option
+      el.innerHTML = '<span style="color:var(--yellow)">Ready to connect</span> &middot; Credentials: found &middot; Token: needed';
+      connectPanel.style.display = 'block';
+      document.getElementById('gmail-fetch-btn').disabled = true;
+      document.getElementById('gmail-watch-btn').disabled = true;
+    } else if (!s.credentials_exist) {
+      el.innerHTML = '<span style="color:var(--red)">OAuth credentials missing</span> &middot; Please upload gmail_credentials.json';
+      connectPanel.style.display = 'none';
       document.getElementById('gmail-fetch-btn').disabled = true;
       document.getElementById('gmail-watch-btn').disabled = true;
     } else {
+      // Fully authenticated
       var parts = [];
-      parts.push(s.authenticated ? '<span style="color:var(--green)">Authenticated</span>' : '<span style="color:var(--red)">Not authenticated</span>');
-      parts.push(s.credentials_exist ? 'Credentials: found' : '<span style="color:var(--red)">Credentials: missing</span>');
-      parts.push(s.token_exist ? 'Token: saved' : 'Token: not yet created');
+      parts.push('<span style="color:var(--green)">Authenticated</span>');
+      parts.push('Credentials: found');
+      parts.push('Token: saved');
       if (s.pubsub_topic) parts.push('Pub/Sub: ' + s.pubsub_topic);
       if (s.last_history_id) parts.push('History ID: ' + s.last_history_id);
       el.innerHTML = parts.join(' &middot; ');
+      connectPanel.style.display = 'none';
+      document.getElementById('gmail-fetch-btn').disabled = false;
+      document.getElementById('gmail-watch-btn').disabled = false;
     }
   } catch(e) { console.error('Gmail status error:', e); }
+}
+
+// Web-based OAuth flow (no SSH required)
+var _gmailAuthWindow: Window | null = null;
+var _gmailAuthCheckInterval: number | null = null;
+
+async function gmailStartWebAuth() {
+  var btn = document.getElementById('gmail-connect-btn');
+  var result = document.getElementById('gmail-auth-result');
+  
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+  result.innerHTML = '';
+  
+  try {
+    var resp = await authFetch('/gmail/auth/start');
+    var data = await resp.json();
+    
+    if (data.status === 'authorization_required' && data.auth_url) {
+      // Open OAuth in popup
+      _gmailAuthWindow = window.open(data.auth_url, 'gmailOAuth', 'width=500,height=600,scrollbars=yes');
+      
+      if (!_gmailAuthWindow || _gmailAuthWindow.closed || typeof _gmailAuthWindow.closed === 'undefined') {
+        // Popup blocked - offer manual option
+        result.innerHTML = '<div style="color:var(--yellow);margin-bottom:8px;">Popup blocked. Please click the link below:</div>' +
+          '<a href="' + data.auth_url + '" target="_blank" style="color:var(--accent);word-break:break-all;">' + data.auth_url + '</a>' +
+          '<div style="margin-top:8px;font-size:12px;">After authorization, return here and click "Check Connection"</div>' +
+          '<button onclick="gmailCheckConnection()" class="quick-test-btn" style="margin-top:8px;">Check Connection</button>';
+      } else {
+        result.innerHTML = '<div style="color:var(--accent)">Waiting for authorization...</div>' +
+          '<button onclick="gmailCheckConnection()" class="quick-test-btn" style="margin-top:8px;">Check Connection</button>';
+        
+        // Poll for connection
+        _gmailAuthCheckInterval = window.setInterval(function() {
+          if (_gmailAuthWindow && _gmailAuthWindow.closed) {
+            // Window closed, check connection
+            gmailCheckConnection();
+            if (_gmailAuthCheckInterval) {
+              clearInterval(_gmailAuthCheckInterval);
+              _gmailAuthCheckInterval = null;
+            }
+          }
+        }, 2000);
+      }
+    } else {
+      result.innerHTML = '<div style="color:var(--red)">Unexpected response: ' + JSON.stringify(data) + '</div>';
+    }
+  } catch(e) {
+    result.innerHTML = '<div style="color:var(--red)">Error: ' + e.message + '</div>';
+  }
+  
+  btn.disabled = false;
+  btn.textContent = 'Connect Gmail Account';
+}
+
+async function gmailCheckConnection() {
+  var result = document.getElementById('gmail-auth-result');
+  result.innerHTML = '<div style="color:var(--accent)">Checking connection...</div>';
+  
+  // Wait a moment for token to be saved
+  await new Promise(r => setTimeout(r, 2000));
+  
+  await loadGmailStatus();
+  
+  // Check if now authenticated
+  var resp = await authFetch('/gmail/status');
+  var s = await resp.json();
+  
+  if (s.authenticated) {
+    result.innerHTML = '<div style="color:var(--green)">✓ Gmail successfully connected!</div>';
+    if (_gmailAuthCheckInterval) {
+      clearInterval(_gmailAuthCheckInterval);
+      _gmailAuthCheckInterval = null;
+    }
+  } else {
+    result.innerHTML = '<div style="color:var(--yellow)">Not yet connected. If you completed authorization, wait a few seconds and try again.</div>' +
+      '<button onclick="gmailCheckConnection()" class="quick-test-btn" style="margin-top:8px;">Check Again</button>';
+  }
 }
 
 async function gmailFetch() {

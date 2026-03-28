@@ -299,6 +299,167 @@ async def get_timeline(days: int = 7, _auth=Depends(_require_auth)):
     return store.get_timeline(days=days)
 
 
+# --- Gmail OAuth Web Flow (No SSH required) ---
+
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+
+# In-memory store for OAuth state (in production, use Redis or DB)
+_oauth_states: dict[str, dict] = {}
+
+
+@app.get("/gmail/auth/start")
+async def gmail_auth_start(request: Request, _auth=Depends(_require_auth)):
+    """Start Gmail OAuth flow from web UI.
+    
+    Returns a URL that the user should open in their browser to authorize.
+    The callback will be handled by /gmail/auth/callback.
+    """
+    if not config.gmail_enabled:
+        raise HTTPException(status_code=404, detail="Gmail integration not enabled")
+    
+    if not config.gmail_credentials_path.exists():
+        raise HTTPException(
+            status_code=400, 
+            detail=f"OAuth credentials not found at {config.gmail_credentials_path}. "
+                   "Please download from Google Cloud Console and upload."
+        )
+    
+    # Create OAuth flow
+    try:
+        flow = Flow.from_client_secrets_file(
+            str(config.gmail_credentials_path),
+            scopes=["https://www.googleapis.com/auth/gmail.readonly"],
+            redirect_uri=str(request.base_url).rstrip('/') + "/gmail/auth/callback"
+        )
+        
+        # Get authorization URL
+        auth_url, state = flow.authorization_url(
+            access_type='offline',
+            include_granted_scopes='true',
+            prompt='consent'  # Force refresh token
+        )
+        
+        # Store state temporarily
+        _oauth_states[state] = {
+            "created_at": time.time(),
+            "flow_data": {
+                "client_config": flow.client_config,
+                "scopes": flow.scopes,
+                "redirect_uri": flow.redirect_uri
+            }
+        }
+        
+        # Clean up old states (older than 10 minutes)
+        now = time.time()
+        expired = [s for s, d in _oauth_states.items() if now - d["created_at"] > 600]
+        for s in expired:
+            del _oauth_states[s]
+        
+        return {
+            "status": "authorization_required",
+            "auth_url": auth_url,
+            "state": state,
+            "instructions": "Please open the auth_url in your browser and complete the authorization. "
+                           "After approval, you will be redirected back and the token will be saved automatically."
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to start OAuth flow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/gmail/auth/callback")
+async def gmail_auth_callback(request: Request, state: str, code: str | None = None, error: str | None = None):
+    """OAuth callback endpoint. Receives the authorization code from Google."""
+    if error:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Authorization failed: {error}"}
+        )
+    
+    if not code:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Missing authorization code"}
+        )
+    
+    if state not in _oauth_states:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Invalid or expired state. Please start authorization again."}
+        )
+    
+    try:
+        # Recreate the flow
+        flow_data = _oauth_states[state]["flow_data"]
+        flow = Flow.from_client_config(
+            flow_data["client_config"],
+            scopes=flow_data["scopes"],
+            redirect_uri=flow_data["redirect_uri"]
+        )
+        
+        # Exchange code for tokens
+        flow.fetch_token(code=code)
+        
+        # Get credentials
+        creds = flow.credentials
+        
+        # Save token
+        token_data = {
+            'token': creds.token,
+            'refresh_token': creds.refresh_token,
+            'token_uri': creds.token_uri,
+            'client_id': creds.client_id,
+            'client_secret': creds.client_secret,
+            'scopes': creds.scopes
+        }
+        
+        config.gmail_token_path.write_text(json.dumps(token_data, indent=2))
+        
+        # Initialize the client
+        global _gmail_client
+        _gmail_client = None  # Force re-init
+        _get_gmail_client()
+        
+        # Clear the state
+        del _oauth_states[state]
+        
+        # Return success HTML page
+        html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ClawGuard - Gmail Connected</title>
+    <style>
+        body { font-family: system-ui, sans-serif; background: #0a0e17; color: #e0e6f0; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .container { text-align: center; padding: 40px; background: #131a2b; border-radius: 16px; border: 1px solid #2a3555; }
+        .success { color: #00e676; font-size: 48px; margin-bottom: 20px; }
+        h1 { margin-bottom: 16px; }
+        p { color: #8899bb; margin-bottom: 24px; }
+        .btn { background: #4f8cff; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; display: inline-block; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="success">✓</div>
+        <h1>Gmail Successfully Connected</h1>
+        <p>Your Gmail account has been authorized. You can close this window and return to the ClawGuard dashboard.</p>
+        <a href="/" class="btn">Go to Dashboard</a>
+    </div>
+</body>
+</html>
+"""
+        return HTMLResponse(content=html_content)
+        
+    except Exception as e:
+        logger.error(f"OAuth callback failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Failed to complete authorization: {str(e)}"}
+        )
+
+
 # --- Gmail integration endpoints ---
 
 async def _process_and_store(raw: RawEmailPayload, raw_dict: dict | None = None) -> SanitizedEmailEvent:
