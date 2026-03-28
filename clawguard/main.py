@@ -962,8 +962,9 @@ async def gmail_fetch_all(request: Request):
     Example cron (every 5 min):
         */5 * * * * curl -s -X POST http://127.0.0.1:8000/gmail/fetch-all
     """
-    # Only allow from localhost
-    client_ip = request.client.host if request.client else ""
+    # Only allow from localhost — check X-Real-IP/X-Forwarded-For (set by nginx) to detect proxied external requests
+    real_ip = request.headers.get("x-real-ip", "") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    client_ip = real_ip or (request.client.host if request.client else "")
     if client_ip not in ("127.0.0.1", "::1", "localhost"):
         raise HTTPException(status_code=403, detail="Localhost only")
 
