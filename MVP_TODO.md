@@ -24,7 +24,8 @@ Domain: claw-guard.tech
 - [x] 2.2 Gmail OAuth flow stores token per-user in `user_gmail_accounts` (encrypted with Fernet)
 - [x] 2.3 Each user connects their own Gmail(s) from their dashboard
 - [x] 2.4 Gmail fetch scoped to user — events linked to user_id
-- [ ] 2.5 Admin can see all accounts; regular users see only their own
+- [x] 2.5 Auto-fetch all connected accounts via cron (POST /gmail/fetch-all, secured with CLAWGUARD_CRON_SECRET)
+- [ ] 2.6 Admin can see all accounts; regular users see only their own
 
 ## Phase 3: Frontend — Landing Page
 - [x] 3.1 Landing page at `/` — hero, features, how it works, CTA to login
@@ -53,11 +54,16 @@ Domain: claw-guard.tech
 - [x] 6.4 HTTP → HTTPS redirect
 - [x] 6.5 Deploy script updated (preserves certbot SSL config)
 
-## Bugs & Improvements (TODO)
+## Phase 7: Agent Integration
+- [x] 7.1 clawguard-skill updated for new auth (API keys, JWT, HTTPS)
+- [x] 7.2 Query script supports API key auth (`cg_` prefix)
+- [x] 7.3 Email deduplication (prevents re-storing same email on repeated fetches)
+
+## Bugs & Improvements (TODO — deferred)
 - [ ] Stricter login rate limiting (5/min + exponential backoff or temporary account lockout)
 - [ ] Use non-guessable admin email (GitHub username + landing page domain make it easy to guess)
 - [ ] Upload Google OAuth credentials JSON via admin UI (2.1)
-- [ ] Admin sees all Gmail accounts; regular users see only their own (2.5)
+- [ ] Admin sees all Gmail accounts; regular users see only their own (2.6)
 
 ## Google OAuth App Status
 - Currently in "Testing" mode — only manually added test users can connect Gmail
