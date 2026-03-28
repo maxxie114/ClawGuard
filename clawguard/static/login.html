@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log In — ClawGuard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#06090f;--bg2:#0b1120;--surface:#111827;--border:#1e2d4a;--border-hi:#2d4a7a;
+  --text:#e2e8f4;--text2:#8ba2c7;--text3:#5a7299;--accent:#3b82f6;--accent2:#818cf8;
+  --violet:#a78bfa;--red:#f43f5e;--green:#34d399;
+  --font-display:'Syne',sans-serif;--font-body:'DM Sans',sans-serif;--font-mono:'JetBrains Mono',monospace;
+}
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font-body);background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;-webkit-font-smoothing:antialiased}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 50% 30%,rgba(59,130,246,0.06),transparent 60%),radial-gradient(ellipse 50% 40% at 80% 70%,rgba(129,140,248,0.04),transparent 50%);pointer-events:none}
+body::after{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(59,130,246,0.02) 1px,transparent 1px),linear-gradient(90deg,rgba(59,130,246,0.02) 1px,transparent 1px);background-size:60px 60px;pointer-events:none}
+
+.login-container{position:relative;z-index:1;width:100%;max-width:420px;padding:0 24px}
+.logo{display:flex;align-items:center;gap:10px;justify-content:center;margin-bottom:40px;text-decoration:none}
+.logo .shield{width:36px;height:36px;background:linear-gradient(135deg,var(--accent),var(--violet));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:20px;color:white;box-shadow:0 0 24px rgba(59,130,246,0.3)}
+.logo span{font-family:var(--font-display);font-weight:800;font-size:22px;letter-spacing:-0.5px;color:var(--text)}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px 36px;box-shadow:0 24px 80px -12px rgba(0,0,0,0.5),0 0 60px -20px rgba(59,130,246,0.1)}
+.card h1{font-family:var(--font-display);font-weight:700;font-size:24px;letter-spacing:-0.5px;margin-bottom:8px;text-align:center}
+.card .subtitle{text-align:center;color:var(--text2);font-size:14px;margin-bottom:32px}
+
+.field{margin-bottom:20px}
+.field label{display:block;font-size:13px;font-weight:500;color:var(--text2);margin-bottom:8px;letter-spacing:0.2px}
+.field input{width:100%;padding:12px 16px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:var(--font-body);font-size:15px;outline:none;transition:border-color 0.2s}
+.field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,130,246,0.1)}
+.field input::placeholder{color:var(--text3)}
+
+.error-msg{display:none;background:rgba(244,63,94,0.08);border:1px solid rgba(244,63,94,0.2);border-radius:8px;padding:10px 14px;font-size:13px;color:var(--red);margin-bottom:16px;text-align:center}
+.error-msg.visible{display:block}
+
+.btn-submit{width:100%;padding:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:white;border:none;border-radius:8px;font-family:var(--font-body);font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s;margin-top:8px}
+.btn-submit:hover{transform:translateY(-1px);box-shadow:0 4px 24px rgba(59,130,246,0.3)}
+.btn-submit:disabled{opacity:0.5;cursor:not-allowed;transform:none;box-shadow:none}
+
+.footer-link{text-align:center;margin-top:24px;font-size:13px;color:var(--text3)}
+.footer-link a{color:var(--accent);font-weight:500}
+
+.beta-notice{text-align:center;margin-top:20px;padding:12px;background:rgba(59,130,246,0.05);border:1px solid rgba(59,130,246,0.1);border-radius:8px;font-size:12px;color:var(--text3);font-family:var(--font-mono)}
+</style>
+</head>
+<body>
+
+<div class="login-container">
+  <a href="/" class="logo">
+    <div class="shield">&#9737;</div>
+    <span>ClawGuard</span>
+  </a>
+
+  <div class="card">
+    <h1>Welcome back</h1>
+    <p class="subtitle">Log in to your ClawGuard dashboard</p>
+
+    <div class="error-msg" id="error-msg"></div>
+
+    <form id="login-form" onsubmit="return handleLogin(event)">
+      <div class="field">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" placeholder="you@company.com" required autocomplete="email" autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" placeholder="Enter your password" required autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn-submit" id="submit-btn">Log In</button>
+    </form>
+  </div>
+
+  <div class="footer-link">
+    <a href="/">&larr; Back to home</a>
+  </div>
+
+  <div class="beta-notice">
+    Closed beta &mdash; accounts are created by invitation only.
+  </div>
+</div>
+
+<script>
+async function handleLogin(e) {
+  e.preventDefault();
+  var btn = document.getElementById('submit-btn');
+  var errEl = document.getElementById('error-msg');
+  errEl.classList.remove('visible');
+  btn.disabled = true;
+  btn.textContent = 'Logging in...';
+
+  var email = document.getElementById('email').value.trim().toLowerCase();
+  var password = document.getElementById('password').value;
+
+  try {
+    var resp = await fetch('/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email: email, password: password})
+    });
+
+    if (resp.status === 429) {
+      showError('Too many attempts. Please wait a moment.');
+      return;
+    }
+
+    var data = await resp.json();
+
+    if (!resp.ok) {
+      showError(data.detail || 'Invalid email or password.');
+      return;
+    }
+
+    // Store tokens
+    localStorage.setItem('cg_access_token', data.access_token);
+    localStorage.setItem('cg_refresh_token', data.refresh_token);
+    localStorage.setItem('cg_user', JSON.stringify(data.user));
+
+    // Redirect to dashboard
+    window.location.href = '/dashboard';
+  } catch(err) {
+    showError('Connection error. Please try again.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Log In';
+  }
+}
+
+function showError(msg) {
+  var el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+
+// If already logged in, redirect
+(async function() {
+  var token = localStorage.getItem('cg_access_token');
+  if (token) {
+    try {
+      var resp = await fetch('/auth/check', {headers: {'Authorization': 'Bearer ' + token}});
+      var data = await resp.json();
+      if (data.authenticated) window.location.href = '/dashboard';
+    } catch(e) {}
+  }
+})();
+</script>
+</body>
+</html>

@@ -37,3 +37,9 @@ htmlcov/
 # Distribution
 *.tar.gz
 *.whl
+
+# Secrets & credentials
+gmail_credentials.json
+gmail_token.json
+client_secret_*.json
+*.db

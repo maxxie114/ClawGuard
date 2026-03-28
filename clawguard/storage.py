@@ -14,6 +14,209 @@ from .models import DashboardStats, SanitizedEmailEvent
 DEFAULT_DB_PATH = Path("clawguard.db")
 
 
+class UserStore:
+    """SQLite-backed storage for users, API keys, and Gmail accounts."""
+
+    def __init__(self, db_path: Path | str = DEFAULT_DB_PATH):
+        self.db_path = Path(db_path)
+        self._init_db()
+
+    def _init_db(self) -> None:
+        with self._conn() as conn:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    display_name TEXT NOT NULL DEFAULT '',
+                    role TEXT NOT NULL DEFAULT 'user',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+
+                CREATE TABLE IF NOT EXISTS api_keys (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    key_hash TEXT UNIQUE NOT NULL,
+                    name TEXT NOT NULL DEFAULT '',
+                    prefix TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    last_used_at TEXT,
+                    is_revoked INTEGER NOT NULL DEFAULT 0,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE TABLE IF NOT EXISTS user_gmail_accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    gmail_email TEXT NOT NULL DEFAULT '',
+                    token_json_encrypted TEXT NOT NULL,
+                    connected_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+                CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+                CREATE INDEX IF NOT EXISTS idx_gmail_user ON user_gmail_accounts(user_id);
+            """)
+
+    @contextmanager
+    def _conn(self) -> Generator[sqlite3.Connection, None, None]:
+        conn = sqlite3.connect(str(self.db_path))
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    # --- User management ---
+
+    def create_user(self, email: str, password_hash: str, display_name: str = "", role: str = "user") -> dict | None:
+        """Create a user. Returns the user dict or None if email exists."""
+        try:
+            with self._conn() as conn:
+                conn.execute(
+                    "INSERT INTO users (email, password_hash, display_name, role) VALUES (?, ?, ?, ?)",
+                    (email, password_hash, display_name, role),
+                )
+                row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+                return dict(row) if row else None
+        except sqlite3.IntegrityError:
+            return None
+
+    def get_user_by_email(self, email: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: int) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return dict(row) if row else None
+
+    def list_users(self) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, email, display_name, role, created_at FROM users ORDER BY created_at DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_user(self, user_id: int) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute("DELETE FROM users WHERE id = ? AND role != 'admin'", (user_id,))
+            return cursor.rowcount > 0
+
+    def update_user_password(self, user_id: int, password_hash: str) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+            return cursor.rowcount > 0
+
+    # --- API key management ---
+
+    def create_api_key(self, user_id: int, key_hash: str, name: str, prefix: str) -> dict:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO api_keys (user_id, key_hash, name, prefix) VALUES (?, ?, ?, ?)",
+                (user_id, key_hash, name, prefix),
+            )
+            row = conn.execute(
+                "SELECT id, user_id, name, prefix, created_at, last_used_at, is_revoked FROM api_keys WHERE key_hash = ?",
+                (key_hash,),
+            ).fetchone()
+            return dict(row)
+
+    def get_user_by_api_key_hash(self, key_hash: str) -> dict | None:
+        """Look up user by API key hash. Also updates last_used_at."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT u.* FROM users u
+                   JOIN api_keys k ON k.user_id = u.id
+                   WHERE k.key_hash = ? AND k.is_revoked = 0""",
+                (key_hash,),
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE api_keys SET last_used_at = datetime('now') WHERE key_hash = ?",
+                    (key_hash,),
+                )
+                return dict(row)
+            return None
+
+    def list_api_keys(self, user_id: int) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, name, prefix, created_at, last_used_at, is_revoked FROM api_keys WHERE user_id = ? ORDER BY created_at DESC",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def revoke_api_key(self, key_id: int, user_id: int) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "UPDATE api_keys SET is_revoked = 1 WHERE id = ? AND user_id = ?",
+                (key_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+    # --- Gmail account management ---
+
+    def store_gmail_account(self, user_id: int, gmail_email: str, token_json_encrypted: str) -> dict:
+        """Store or update a Gmail account for a user."""
+        with self._conn() as conn:
+            # Upsert: if user already connected this gmail, update the token
+            existing = conn.execute(
+                "SELECT id FROM user_gmail_accounts WHERE user_id = ? AND gmail_email = ?",
+                (user_id, gmail_email),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE user_gmail_accounts SET token_json_encrypted = ?, connected_at = datetime('now') WHERE id = ?",
+                    (token_json_encrypted, existing["id"]),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO user_gmail_accounts (user_id, gmail_email, token_json_encrypted) VALUES (?, ?, ?)",
+                    (user_id, gmail_email, token_json_encrypted),
+                )
+            row = conn.execute(
+                "SELECT * FROM user_gmail_accounts WHERE user_id = ? AND gmail_email = ?",
+                (user_id, gmail_email),
+            ).fetchone()
+            return dict(row)
+
+    def list_gmail_accounts(self, user_id: int) -> list[dict]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT id, user_id, gmail_email, connected_at FROM user_gmail_accounts WHERE user_id = ?",
+                (user_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_gmail_token(self, user_id: int, gmail_email: str) -> str | None:
+        """Get encrypted token for a specific Gmail account."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT token_json_encrypted FROM user_gmail_accounts WHERE user_id = ? AND gmail_email = ?",
+                (user_id, gmail_email),
+            ).fetchone()
+            return row["token_json_encrypted"] if row else None
+
+    def get_all_gmail_tokens(self) -> list[dict]:
+        """Get all Gmail accounts (for admin). Returns id, user_id, gmail_email, token_json_encrypted."""
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM user_gmail_accounts").fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_gmail_account(self, account_id: int, user_id: int) -> bool:
+        with self._conn() as conn:
+            cursor = conn.execute(
+                "DELETE FROM user_gmail_accounts WHERE id = ? AND user_id = ?",
+                (account_id, user_id),
+            )
+            return cursor.rowcount > 0
+
+
 class EventStore:
     """SQLite-backed storage for sanitized email events."""
 
@@ -46,13 +249,21 @@ class EventStore:
                 CREATE INDEX IF NOT EXISTS idx_injection ON sanitized_events(injection_detected);
                 CREATE INDEX IF NOT EXISTS idx_risk_score ON sanitized_events(risk_score);
             """)
-            # Migrate existing DBs: add to_addr column if missing, then index it
-            try:
-                conn.execute("ALTER TABLE sanitized_events ADD COLUMN to_addr TEXT NOT NULL DEFAULT ''")
-            except Exception:
-                pass  # Column already exists
+            # Migrate existing DBs: add columns if missing
+            for col, defn in [
+                ("to_addr", "TEXT NOT NULL DEFAULT ''"),
+                ("user_id", "INTEGER"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE sanitized_events ADD COLUMN {col} {defn}")
+                except Exception:
+                    pass
             try:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_to_addr ON sanitized_events(to_addr)")
+            except Exception:
+                pass
+            try:
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_user_id ON sanitized_events(user_id)")
             except Exception:
                 pass
 
@@ -66,7 +277,7 @@ class EventStore:
         finally:
             conn.close()
 
-    def store_event(self, event: SanitizedEmailEvent, raw_masked: str | None = None) -> None:
+    def store_event(self, event: SanitizedEmailEvent, raw_masked: str | None = None, user_id: int | None = None) -> None:
         """Store a sanitized event."""
         to_addr = event.to_addrs[0] if event.to_addrs else ""
         with self._conn() as conn:
@@ -74,8 +285,8 @@ class EventStore:
                 """INSERT OR REPLACE INTO sanitized_events
                    (event_id, provider, received_at, from_addr, to_addr, subject_sanitized,
                     body_sanitized, risk_flags, injection_detected, truncated,
-                    risk_score, raw_payload_masked, sanitized_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    risk_score, raw_payload_masked, sanitized_json, user_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event.event_id,
                     event.provider,
@@ -90,6 +301,7 @@ class EventStore:
                     event.risk.risk_score,
                     raw_masked,
                     event.model_dump_json(),
+                    user_id,
                 ),
             )
 

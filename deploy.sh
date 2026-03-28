@@ -14,7 +14,18 @@ ssh "$SERVER" bash -s << 'EOF'
   source .venv/bin/activate 2>/dev/null || true
   pip install -q -r requirements.txt 2>/dev/null || true
 
-  # Detect process manager and restart
+  # Setup nginx if not already configured
+  if [ -f nginx/clawguard.conf ]; then
+    if ! diff -q nginx/clawguard.conf /etc/nginx/sites-available/clawguard.conf &>/dev/null 2>&1; then
+      echo "Updating nginx config..."
+      cp nginx/clawguard.conf /etc/nginx/sites-available/clawguard.conf
+      ln -sf /etc/nginx/sites-available/clawguard.conf /etc/nginx/sites-enabled/clawguard.conf
+      rm -f /etc/nginx/sites-enabled/default
+      nginx -t && systemctl reload nginx
+    fi
+  fi
+
+  # Restart the API server
   if systemctl is-active --quiet clawguard 2>/dev/null; then
     echo "Restarting via systemd..."
     systemctl restart clawguard
@@ -27,7 +38,10 @@ ssh "$SERVER" bash -s << 'EOF'
     echo "WARNING: No known process manager found. Restart manually."
     echo "  uvicorn clawguard.main:app --host 0.0.0.0 --port 8000"
   fi
+
+  echo "==> Waiting for API to start..."
+  sleep 3
 EOF
 
-echo "==> Done. Checking health..."
-curl -sf http://157.230.149.230:8000/health && echo " OK" || echo " FAILED"
+echo "==> Checking health..."
+curl -sf http://157.230.149.230:8000/health && echo " OK" || echo " FAILED (may need a few more seconds)"

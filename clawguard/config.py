@@ -62,6 +62,13 @@ class Config(BaseModel):
     admin_password: str = Field(default_factory=_default_admin_password)
     api_key: str = Field(default_factory=_default_api_key)
 
+    # JWT / encryption
+    jwt_secret: str = Field(default_factory=lambda: os.getenv("CLAWGUARD_JWT_SECRET", "") or secrets.token_urlsafe(32))
+    encryption_key: str = Field(default_factory=lambda: os.getenv("CLAWGUARD_ENCRYPTION_KEY", ""))
+
+    # Admin account
+    admin_email: str = Field(default_factory=lambda: os.getenv("CLAWGUARD_ADMIN_EMAIL", "admin@clawguard.local"))
+
     # Gmail / GCP integration
     gmail_enabled: bool = Field(default_factory=lambda: os.getenv("GMAIL_ENABLED", "false").lower() == "true")
     gmail_credentials_path: Path = Field(default_factory=lambda: Path(os.getenv("GMAIL_CREDENTIALS_PATH", "gmail_credentials.json")))
