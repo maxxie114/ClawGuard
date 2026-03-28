@@ -305,6 +305,15 @@ class EventStore:
                 ),
             )
 
+    def event_exists(self, from_addr: str, to_addr: str, received_at: str, subject: str) -> bool:
+        """Check if an email with the same sender, recipient, time, and subject already exists."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM sanitized_events WHERE from_addr = ? AND to_addr = ? AND received_at = ? AND subject_sanitized = ? LIMIT 1",
+                (from_addr, to_addr, received_at, subject),
+            ).fetchone()
+            return row is not None
+
     def get_event(self, event_id: str) -> dict | None:
         """Get a single event by ID."""
         with self._conn() as conn:

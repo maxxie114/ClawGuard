@@ -869,7 +869,16 @@ async def gmail_fetch_recent(
         raw_emails = gmail.fetch_recent_messages(max_results=max_results, query=query)
 
         results = []
+        skipped = 0
         for raw in raw_emails:
+            # Deduplicate: skip if we already have this email
+            to_addr = raw.to_addrs[0] if raw.to_addrs else ""
+            received_at = raw.timestamp or ""
+            subject = raw.subject or ""
+            if store.event_exists(raw.from_address, to_addr, received_at, subject):
+                skipped += 1
+                continue
+
             sanitized = await _process_and_store(raw, user_id=user["id"])
             results.append({
                 "event_id": sanitized.event_id,
@@ -879,7 +888,7 @@ async def gmail_fetch_recent(
                 "injection_detected": sanitized.risk.injection_detected,
             })
 
-        return {"status": "fetched", "total_fetched": len(results), "results": results}
+        return {"status": "fetched", "total_fetched": len(results), "skipped_duplicates": skipped, "results": results}
 
     except HTTPException:
         raise
@@ -940,6 +949,72 @@ async def gmail_status(user: dict = Depends(_get_current_user)):
         "account_count": len(accounts),
         "pubsub_topic": config.gcp_pubsub_topic or None,
     }
+
+
+# ============================================================
+# Background Gmail polling — auto-fetch every 5 minutes
+# ============================================================
+
+GMAIL_POLL_INTERVAL = int(os.environ.get("GMAIL_POLL_INTERVAL", "300"))  # seconds
+_poll_task: asyncio.Task | None = None
+
+
+async def _poll_all_gmail_accounts():
+    """Background task: fetch new emails for all connected Gmail accounts."""
+    while True:
+        await asyncio.sleep(GMAIL_POLL_INTERVAL)
+        if not config.gmail_enabled:
+            continue
+
+        all_accounts = user_store.get_all_gmail_tokens()
+        if not all_accounts:
+            continue
+
+        logger.info(f"Gmail poll: checking {len(all_accounts)} account(s) for new emails")
+
+        for acct in all_accounts:
+            user_id = acct["user_id"]
+            gmail_email = acct["gmail_email"]
+            try:
+                gmail = _get_gmail_client_for_user(user_id, gmail_email)
+                raw_emails = gmail.fetch_recent_messages(max_results=20, query="in:inbox newer_than:1h")
+
+                new_count = 0
+                for raw in raw_emails:
+                    # Deduplicate: skip if we already have this email
+                    to_addr = raw.to_addrs[0] if raw.to_addrs else ""
+                    received_at = raw.timestamp or ""
+                    subject = raw.subject or ""
+                    if store.event_exists(raw.from_address, to_addr, received_at, subject):
+                        continue
+
+                    await _process_and_store(raw, user_id=user_id)
+                    new_count += 1
+
+                if new_count > 0:
+                    logger.info(f"Gmail poll: {new_count} new email(s) for {gmail_email}")
+
+            except Exception as e:
+                logger.error(f"Gmail poll failed for {gmail_email}: {e}")
+                continue
+
+        logger.info("Gmail poll: cycle complete")
+
+
+@app.on_event("startup")
+async def _start_gmail_polling():
+    global _poll_task
+    if config.gmail_enabled:
+        _poll_task = asyncio.create_task(_poll_all_gmail_accounts())
+        logger.info(f"Gmail background polling started (interval={GMAIL_POLL_INTERVAL}s)")
+
+
+@app.on_event("shutdown")
+async def _stop_gmail_polling():
+    global _poll_task
+    if _poll_task:
+        _poll_task.cancel()
+        logger.info("Gmail background polling stopped")
 
 
 # ============================================================
