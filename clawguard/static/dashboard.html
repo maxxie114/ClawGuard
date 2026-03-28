@@ -265,6 +265,53 @@ table .mono{font-family:var(--font-mono);font-size:12px;color:var(--text2)}
           <button class="btn btn-primary" onclick="showAddUserModal()">Add Beta User</button>
           <div style="margin-top:16px" id="users-list"></div>
         </div>
+
+        <div class="card" style="margin-top:20px">
+          <h2 style="margin-bottom:4px">Adding a Beta User — Full Checklist</h2>
+          <p style="color:var(--text2);font-size:14px;margin-bottom:16px">Two steps are needed: create the user here <strong>and</strong> add their Gmail as a GCP test user (so they can connect Gmail OAuth).</p>
+
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:16px">
+            <h3 style="font-size:15px;font-weight:600;color:var(--accent);margin-bottom:12px">Step 1 — Create the user in ClawGuard</h3>
+            <ol style="color:var(--text2);font-size:13px;line-height:2;padding-left:20px">
+              <li>Click <strong>"Add Beta User"</strong> above</li>
+              <li>Enter their email, display name, and a temporary password</li>
+              <li>Share the temporary password with them securely (they can't reset it themselves yet)</li>
+            </ol>
+          </div>
+
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:16px">
+            <h3 style="font-size:15px;font-weight:600;color:var(--accent);margin-bottom:12px">Step 2 — Add their Gmail as a GCP test user</h3>
+            <p style="color:var(--text3);font-size:12px;margin-bottom:12px">Required because the Google OAuth app is in "Testing" mode. Without this, they'll see "Access blocked" when connecting Gmail.</p>
+            <ol style="color:var(--text2);font-size:13px;line-height:2.2;padding-left:20px">
+              <li>Go to <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" style="color:var(--cyan);text-decoration:underline">Google Cloud Console → OAuth consent screen</a></li>
+              <li>Make sure the correct GCP project is selected (top-left dropdown)</li>
+              <li>Scroll down to the <strong>"Test users"</strong> section</li>
+              <li>Click <strong>"+ Add Users"</strong></li>
+              <li>Enter the user's <strong>Gmail address</strong> (the one they'll connect, not necessarily their ClawGuard login email)</li>
+              <li>Click <strong>Save</strong></li>
+            </ol>
+          </div>
+
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px">
+            <h3 style="font-size:15px;font-weight:600;color:var(--accent);margin-bottom:12px">Step 3 — Tell the user</h3>
+            <div style="color:var(--text2);font-size:13px;line-height:1.8">
+              <p>Send them something like:</p>
+              <div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin-top:10px;font-family:var(--font-mono);font-size:12px;color:var(--text);white-space:pre-line">Your ClawGuard beta account is ready!
+
+Login: https://claw-guard.tech/login
+Email: [their email]
+Password: [temporary password]
+
+After logging in, go to Gmail in the sidebar to connect your inbox.
+You'll see a Google warning ("unverified app") — click Advanced → Continue.
+This is normal for beta apps.</div>
+            </div>
+          </div>
+
+          <div style="margin-top:16px;padding:12px 16px;background:rgba(250,204,21,0.08);border:1px solid rgba(250,204,21,0.2);border-radius:8px">
+            <p style="font-size:12px;color:var(--yellow)"><strong>Note:</strong> GCP test user limit is 100 accounts. Once the app is verified by Google, this step is no longer needed.</p>
+          </div>
+        </div>
       </div>
 
     </div>
