@@ -314,20 +314,28 @@ class EventStore:
             ).fetchone()
             return row is not None
 
-    def get_event(self, event_id: str) -> dict | None:
-        """Get a single event by ID."""
+    def get_event(self, event_id: str, user_id: int | None = None) -> dict | None:
+        """Get a single event by ID. If user_id given, only returns the event if it belongs to that user."""
         with self._conn() as conn:
-            row = conn.execute(
-                "SELECT * FROM sanitized_events WHERE event_id = ?", (event_id,)
-            ).fetchone()
+            if user_id is not None:
+                row = conn.execute(
+                    "SELECT * FROM sanitized_events WHERE event_id = ? AND user_id = ?", (event_id, user_id)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM sanitized_events WHERE event_id = ?", (event_id,)
+                ).fetchone()
             if row:
                 return dict(row)
         return None
 
-    def list_events(self, limit: int = 50, offset: int = 0, from_addr: str | None = None, to_addr: str | None = None) -> list[dict]:
-        """List events ordered by received_at descending, optionally filtered by sender or recipient account."""
+    def list_events(self, limit: int = 50, offset: int = 0, from_addr: str | None = None, to_addr: str | None = None, user_id: int | None = None) -> list[dict]:
+        """List events ordered by received_at descending, scoped to user_id if provided."""
         conditions = []
         params: list = []
+        if user_id is not None:
+            conditions.append("user_id = ?")
+            params.append(user_id)
         if from_addr:
             conditions.append("from_addr LIKE ?")
             params.append(f"%{from_addr}%")
@@ -343,10 +351,17 @@ class EventStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def list_senders(self, to_addr: str | None = None) -> list[dict]:
-        """List unique senders with email counts, optionally scoped to one account."""
-        where = "WHERE to_addr LIKE ?" if to_addr else ""
-        params = [f"%{to_addr}%"] if to_addr else []
+    def list_senders(self, to_addr: str | None = None, user_id: int | None = None) -> list[dict]:
+        """List unique senders with email counts, scoped to user_id if provided."""
+        conditions = []
+        params: list = []
+        if user_id is not None:
+            conditions.append("user_id = ?")
+            params.append(user_id)
+        if to_addr:
+            conditions.append("to_addr LIKE ?")
+            params.append(f"%{to_addr}%")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         with self._conn() as conn:
             rows = conn.execute(
                 f"""SELECT from_addr,
@@ -360,46 +375,56 @@ class EventStore:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def list_accounts(self) -> list[dict]:
-        """List distinct recipient accounts (inboxes) connected to this server."""
+    def list_accounts(self, user_id: int | None = None) -> list[dict]:
+        """List distinct recipient accounts (inboxes), scoped to user_id if provided."""
+        conditions = ["to_addr != ''"]
+        params: list = []
+        if user_id is not None:
+            conditions.append("user_id = ?")
+            params.append(user_id)
+        where = f"WHERE {' AND '.join(conditions)}"
         with self._conn() as conn:
             rows = conn.execute(
-                """SELECT to_addr,
+                f"""SELECT to_addr,
                           COUNT(*) as total,
                           SUM(CASE WHEN injection_detected = 1 THEN 1 ELSE 0 END) as injections,
                           MAX(received_at) as last_seen
-                   FROM sanitized_events
-                   WHERE to_addr != ''
+                   FROM sanitized_events {where}
                    GROUP BY to_addr
-                   ORDER BY total DESC"""
+                   ORDER BY total DESC""",
+                params,
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def list_risky_events(self, min_score: int = 1, limit: int = 50) -> list[dict]:
-        """List events with risk score >= min_score."""
+    def list_risky_events(self, min_score: int = 1, limit: int = 50, user_id: int | None = None) -> list[dict]:
+        """List events with risk score >= min_score, scoped to user_id if provided."""
+        if user_id is not None:
+            sql = "SELECT * FROM sanitized_events WHERE risk_score >= ? AND user_id = ? ORDER BY risk_score DESC LIMIT ?"
+            params = (min_score, user_id, limit)
+        else:
+            sql = "SELECT * FROM sanitized_events WHERE risk_score >= ? ORDER BY risk_score DESC LIMIT ?"
+            params = (min_score, limit)
         with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT * FROM sanitized_events WHERE risk_score >= ? ORDER BY risk_score DESC LIMIT ?",
-                (min_score, limit),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
 
-    def get_stats(self) -> DashboardStats:
-        """Get dashboard statistics."""
+    def get_stats(self, user_id: int | None = None) -> DashboardStats:
+        """Get dashboard statistics, scoped to user_id if provided."""
+        scope = "WHERE user_id = ?" if user_id is not None else ""
+        scope_param = (user_id,) if user_id is not None else ()
         with self._conn() as conn:
-            total = conn.execute("SELECT COUNT(*) FROM sanitized_events").fetchone()[0]
+            total = conn.execute(f"SELECT COUNT(*) FROM sanitized_events {scope}", scope_param).fetchone()[0]
             risky = conn.execute(
-                "SELECT COUNT(*) FROM sanitized_events WHERE risk_score > 0"
+                f"SELECT COUNT(*) FROM sanitized_events WHERE risk_score > 0 {'AND user_id = ?' if user_id is not None else ''}",
+                scope_param,
             ).fetchone()[0]
             injections = conn.execute(
-                "SELECT COUNT(*) FROM sanitized_events WHERE injection_detected = 1"
+                f"SELECT COUNT(*) FROM sanitized_events WHERE injection_detected = 1 {'AND user_id = ?' if user_id is not None else ''}",
+                scope_param,
             ).fetchone()[0]
 
-            # Count blocked attachments from sanitized_json
             blocked = 0
-            rows = conn.execute(
-                "SELECT sanitized_json FROM sanitized_events"
-            ).fetchall()
+            rows = conn.execute(f"SELECT sanitized_json FROM sanitized_events {scope}", scope_param).fetchall()
             for row in rows:
                 try:
                     data = json.loads(row[0])
@@ -410,14 +435,14 @@ class EventStore:
                     pass
 
             avg_score_row = conn.execute(
-                "SELECT AVG(risk_score) FROM sanitized_events"
+                f"SELECT AVG(risk_score) FROM sanitized_events {scope}", scope_param
             ).fetchone()
             avg_score = avg_score_row[0] if avg_score_row[0] is not None else 0.0
 
             today = datetime.utcnow().date().isoformat()
             today_count = conn.execute(
-                "SELECT COUNT(*) FROM sanitized_events WHERE received_at >= ?",
-                (today,),
+                f"SELECT COUNT(*) FROM sanitized_events WHERE received_at >= ? {'AND user_id = ?' if user_id is not None else ''}",
+                (today, user_id) if user_id is not None else (today,),
             ).fetchone()[0]
 
             return DashboardStats(
@@ -429,19 +454,32 @@ class EventStore:
                 events_today=today_count,
             )
 
-    def get_timeline(self, days: int = 7) -> list[dict]:
-        """Get event counts per day for the timeline graph."""
+    def get_timeline(self, days: int = 7, user_id: int | None = None) -> list[dict]:
+        """Get event counts per day for the timeline graph, scoped to user_id if provided."""
         with self._conn() as conn:
             since = (datetime.utcnow() - timedelta(days=days)).isoformat()
-            rows = conn.execute(
-                """SELECT DATE(received_at) as day,
-                          COUNT(*) as total,
-                          SUM(CASE WHEN injection_detected = 1 THEN 1 ELSE 0 END) as injections,
-                          SUM(CASE WHEN risk_score > 0 THEN 1 ELSE 0 END) as risky
-                   FROM sanitized_events
-                   WHERE received_at >= ?
-                   GROUP BY DATE(received_at)
-                   ORDER BY day""",
-                (since,),
-            ).fetchall()
+            if user_id is not None:
+                rows = conn.execute(
+                    """SELECT DATE(received_at) as day,
+                              COUNT(*) as total,
+                              SUM(CASE WHEN injection_detected = 1 THEN 1 ELSE 0 END) as injections,
+                              SUM(CASE WHEN risk_score > 0 THEN 1 ELSE 0 END) as risky
+                       FROM sanitized_events
+                       WHERE received_at >= ? AND user_id = ?
+                       GROUP BY DATE(received_at)
+                       ORDER BY day""",
+                    (since, user_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT DATE(received_at) as day,
+                              COUNT(*) as total,
+                              SUM(CASE WHEN injection_detected = 1 THEN 1 ELSE 0 END) as injections,
+                              SUM(CASE WHEN risk_score > 0 THEN 1 ELSE 0 END) as risky
+                       FROM sanitized_events
+                       WHERE received_at >= ?
+                       GROUP BY DATE(received_at)
+                       ORDER BY day""",
+                    (since,),
+                ).fetchall()
             return [dict(r) for r in rows]

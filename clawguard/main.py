@@ -504,8 +504,18 @@ async def send_test_email(request: Request):
 # ============================================================
 
 @app.get("/api/stats")
-async def get_stats() -> DashboardStats:
-    return store.get_stats()
+async def get_stats(request: Request) -> DashboardStats:
+    # Scope stats to the authenticated user if a token is present; admins see all
+    uid = None
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Bearer "):
+        try:
+            user = await _get_current_user(request)
+            if user["role"] != "admin":
+                uid = user["id"]
+        except Exception:
+            pass
+    return store.get_stats(user_id=uid)
 
 
 @app.get("/api/events")
@@ -516,27 +526,32 @@ async def list_events(
     to_addr: str | None = None,
     user: dict = Depends(_get_current_user),
 ):
-    return store.list_events(limit=limit, offset=offset, from_addr=from_addr, to_addr=to_addr)
+    uid = None if user["role"] == "admin" else user["id"]
+    return store.list_events(limit=limit, offset=offset, from_addr=from_addr, to_addr=to_addr, user_id=uid)
 
 
 @app.get("/api/accounts")
 async def list_accounts(user: dict = Depends(_get_current_user)):
-    return store.list_accounts()
+    uid = None if user["role"] == "admin" else user["id"]
+    return store.list_accounts(user_id=uid)
 
 
 @app.get("/api/senders")
 async def list_senders(to_addr: str | None = None, user: dict = Depends(_get_current_user)):
-    return store.list_senders(to_addr=to_addr)
+    uid = None if user["role"] == "admin" else user["id"]
+    return store.list_senders(to_addr=to_addr, user_id=uid)
 
 
 @app.get("/api/events/risky")
 async def list_risky_events(min_score: int = 1, limit: int = 50, user: dict = Depends(_get_current_user)):
-    return store.list_risky_events(min_score=min_score, limit=limit)
+    uid = None if user["role"] == "admin" else user["id"]
+    return store.list_risky_events(min_score=min_score, limit=limit, user_id=uid)
 
 
 @app.get("/api/events/{event_id}")
 async def get_event(event_id: str, user: dict = Depends(_get_current_user)):
-    event = store.get_event(event_id)
+    uid = None if user["role"] == "admin" else user["id"]
+    event = store.get_event(event_id, user_id=uid)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     return event
@@ -544,7 +559,8 @@ async def get_event(event_id: str, user: dict = Depends(_get_current_user)):
 
 @app.get("/api/timeline")
 async def get_timeline(days: int = 7, user: dict = Depends(_get_current_user)):
-    return store.get_timeline(days=days)
+    uid = None if user["role"] == "admin" else user["id"]
+    return store.get_timeline(days=days, user_id=uid)
 
 
 # ============================================================
